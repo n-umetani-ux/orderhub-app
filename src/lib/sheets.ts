@@ -36,9 +36,9 @@ function getAuthClient() {
 const COL = { manNo: 0, kubun: 1, name: 2, activity: 3, ending: 4, customer: 5, tantou: 6, customerCode: 30 };
 
 // 機密列: I(8), J-W(9-22), O(14), X(23) → API層で除外（返さない）
-const SENSITIVE_COLS = new Set([8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]);
+export const SENSITIVE_COLS = new Set([8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]);
 
-function parseRows(rows: string[][], loc: Loc): SheetsEngineer[] {
+export function parseRows(rows: string[][], loc: Loc): SheetsEngineer[] {
   const result: SheetsEngineer[] = [];
   let inStandby = false;
   let headerRowIdx = -1;
