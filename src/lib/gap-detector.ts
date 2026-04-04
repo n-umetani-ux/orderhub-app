@@ -25,10 +25,16 @@ function daysDiff(a: Date, b: Date): number {
  */
 export function detectStatus(
   eng: SheetsEngineer,
-  orders: OrderRecord[]
+  orders: OrderRecord[],
+  isArchived = false,
 ): EngineerStatus {
+  // アーカイブ済みは最優先
+  if (isArchived) return "archived";
+
+  // 当月終了フラグ（E列=1.0）は注文書有無に関わらず優先
+  if (eng.ending >= 1.0) return "ending";
+
   const now = today();
-  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
   // 当月有効な注文書を抽出
   const validOrders = orders.filter(o => {
@@ -49,9 +55,6 @@ export function detectStatus(
 
   const daysLeft = daysDiff(now, latestEnd);
 
-  // 当月終了フラグ
-  if (eng.ending >= 1.0) return "ending";
-
   // 期限迫る
   if (daysLeft <= GAP_WARN_DAYS) return "expiring";
 
@@ -63,9 +66,10 @@ export function detectStatus(
  */
 export function toEngineer(
   eng: SheetsEngineer,
-  orders: OrderRecord[]
+  orders: OrderRecord[],
+  isArchived = false,
 ): Engineer {
-  const status = detectStatus(eng, orders);
+  const status = detectStatus(eng, orders, isArchived);
 
   // 最新の有効注文書を選ぶ
   const latest = orders

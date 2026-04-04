@@ -201,6 +201,9 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
   const [startDate, setStartDate]   = useState("");
   const [endDate, setEndDate]       = useState("");
   const [issueDate, setIssueDate]   = useState("");
+  const [multiMembers, setMultiMembers] = useState<SheetsEngineer[]>([]);
+  const [multiSearchVal, setMultiSearchVal] = useState("");
+  const [multiSuggestions, setMultiSuggestions] = useState<SheetsEngineer[]>([]);
   const [multiLowestManNo, setMultiLowestManNo] = useState("");
   const [dept, setDept]             = useState<string>(
     prefill ? (DEPTS.find(d => d.loc === prefill.loc)?.code ?? "1010") : "1010"
@@ -359,9 +362,49 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
     if (matchDept) setDept(matchDept.code);
   };
 
+  // multi メンバー検索
+  const handleMultiSearch = (val: string) => {
+    setMultiSearchVal(val);
+    if (val.length < 1) { setMultiSuggestions([]); return; }
+    const cache = loadCache(user?.email ?? "");
+    const engineers = (cache?.engineers ?? []) as SheetsEngineer[];
+    const alreadyAdded = new Set(multiMembers.map(m => m.manNo));
+    const filtered = engineers.filter(e =>
+      !alreadyAdded.has(e.manNo) && (String(e.manNo).includes(val) || e.name.includes(val))
+    ).slice(0, 8);
+    setMultiSuggestions(filtered);
+  };
+
+  const addMultiMember = (e: SheetsEngineer) => {
+    const next = [...multiMembers, e];
+    setMultiMembers(next);
+    setMultiSearchVal("");
+    setMultiSuggestions([]);
+    // 最若番号を自動算出
+    const lowest = next.reduce((min, m) => m.manNo < min ? m.manNo : min, next[0].manNo);
+    setMultiLowestManNo(lowest);
+    // 部署を最初のメンバーから設定
+    if (next.length === 1) {
+      const matchDept = DEPTS.find(d => d.loc === e.loc);
+      if (matchDept) setDept(matchDept.code);
+    }
+  };
+
+  const removeMultiMember = (manNo: string) => {
+    const next = multiMembers.filter(m => m.manNo !== manNo);
+    setMultiMembers(next);
+    if (next.length > 0) {
+      const lowest = next.reduce((min, m) => m.manNo < min ? m.manNo : min, next[0].manNo);
+      setMultiLowestManNo(lowest);
+    } else {
+      setMultiLowestManNo("");
+    }
+  };
+
   const handleSubmit = async () => {
     if (!activeEntry?.file) { setUploadError("PDFファイルを選択してください"); return; }
     if (!startDate || !endDate) { setUploadError("契約期間を入力してください"); return; }
+    if (targetType === "multi(チーム)" && multiMembers.length === 0) { setUploadError("チームメンバーを1名以上追加してください"); return; }
     setUploading(true);
     setUploadError(null);
     try {
@@ -376,7 +419,31 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
-      if (targetType !== "multi(チーム)" && selectedEng) {
+      if (targetType === "multi(チーム)") {
+        // multiの場合: 全メンバー分の注文書レコードを記録
+        for (const member of multiMembers) {
+          await fetch("/api/orders", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(accessToken ? { "x-google-access-token": accessToken } : {}),
+            },
+            body: JSON.stringify({
+              manNo:         member.manNo,
+              name:          member.name,
+              contractStart: startDate,
+              contractEnd:   endDate,
+              fileName,
+              driveLink:     data.link ?? "",
+              dept,
+              customerCode:  member.customerCode,
+              customerName:  member.customer,
+              targetType,
+              uploadedBy:    user?.email ?? "",
+            }),
+          });
+        }
+      } else if (selectedEng) {
         await fetch("/api/orders", {
           method: "POST",
           headers: {
@@ -550,7 +617,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                   {(["社員番号", "BP番号", "multi(チーム)"] as TargetType[]).map(t => (
                     <button
                       key={t}
-                      onClick={() => { setTargetType(t); setSelected(null); setSearchVal(""); }}
+                      onClick={() => { setTargetType(t); setSelected(null); setSearchVal(""); setMultiMembers([]); setMultiLowestManNo(""); }}
                       className={`px-4 py-1.5 rounded-lg border text-xs font-semibold transition-all
                         ${targetType === t ? "border-blue-400 bg-blue-50 text-blue-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
                     >
@@ -633,17 +700,60 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                 </div>
               </div>
 
-              {/* multi: 最若番号入力 */}
+              {/* multi: メンバー選択 */}
               {targetType === "multi(チーム)" && (
                 <div>
-                  <label className="text-xs font-semibold text-slate-700 mb-2 block">最若番号（multiファイル名用）</label>
-                  <input
-                    type="text"
-                    value={multiLowestManNo}
-                    onChange={e => setMultiLowestManNo(e.target.value)}
-                    placeholder="例: 170101"
-                    className="w-full px-2.5 py-2 rounded-lg border border-slate-300 text-sm"
-                  />
+                  <label className="text-xs font-semibold text-slate-700 mb-2 block">
+                    チームメンバー（注文書の対象者を追加）
+                    {cachedCount > 0
+                      ? <span className="ml-2 font-normal text-emerald-600">{cachedCount}件利用可能</span>
+                      : <span className="ml-2 font-normal text-amber-600">キャッシュなし</span>
+                    }
+                  </label>
+                  {/* 追加済みメンバー一覧 */}
+                  {multiMembers.length > 0 && (
+                    <div className="mb-2 space-y-1">
+                      {multiMembers.map(m => (
+                        <div key={m.manNo} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-xs">
+                          <span className="font-mono text-slate-700">{m.manNo}</span>
+                          <span className="font-semibold text-slate-900">{m.name}</span>
+                          <span className="text-slate-500">{m.customer}</span>
+                          <button
+                            onClick={() => removeMultiMember(m.manNo)}
+                            className="ml-auto text-slate-400 hover:text-red-500 transition-colors"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                      <p className="text-[10px] text-slate-500">{multiMembers.length}名選択 / 最若番号: {multiLowestManNo}</p>
+                    </div>
+                  )}
+                  {/* メンバー検索 */}
+                  <div className="relative">
+                    <input
+                      value={multiSearchVal}
+                      onChange={e => handleMultiSearch(e.target.value)}
+                      onFocus={() => { if (multiSearchVal.length > 0) handleMultiSearch(multiSearchVal); }}
+                      onBlur={() => setTimeout(() => setMultiSuggestions([]), 150)}
+                      placeholder="manNo. または氏名でメンバーを追加"
+                      className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
+                    />
+                    {multiSuggestions.length > 0 && (
+                      <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-48 overflow-auto mt-1">
+                        {multiSuggestions.map(s => (
+                          <div
+                            key={s.manNo}
+                            onMouseDown={() => addMultiMember(s)}
+                            className="px-4 py-2 text-sm cursor-pointer hover:bg-slate-50 flex justify-between border-b border-slate-50"
+                          >
+                            <span><b>{s.manNo}</b> {s.name}</span>
+                            <span className="text-slate-600 text-xs">{s.customer} / {s.loc}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 

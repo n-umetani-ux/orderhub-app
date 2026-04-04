@@ -44,6 +44,12 @@ function parseRows(rows: string[][], loc: Loc) {
     const activity = parseFloat(row[COL.activity] ?? "0") || 0;
     if (activity < 0.5) continue;
 
+    // 担当者名の正規化（「全」「全員」等のバリエーション対応）
+    let tantou = row[COL.tantou]?.trim() ?? "";
+    if (tantou === "全" || tantou === "全員" || tantou === "全社") {
+      tantou = "全員";
+    }
+
     result.push({
       manNo,
       kubun:        row[COL.kubun]?.trim() ?? "",
@@ -51,7 +57,7 @@ function parseRows(rows: string[][], loc: Loc) {
       activity,
       ending:       parseFloat(row[COL.ending] ?? "0") || 0,
       customer:     row[COL.customer]?.trim() ?? "",
-      tantou:       row[COL.tantou]?.trim() ?? "",
+      tantou,
       customerCode: row[COL.customerCode]?.trim() ?? "",
       loc,
     });
@@ -116,8 +122,27 @@ export async function GET(req: NextRequest) {
       ordersByManNo = new Map();
     }
 
+    // アーカイブ申請を取得
+    const archivedManNos = new Set<string>();
+    try {
+      const archiveRes = await sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range: "アーカイブ申請!A:E",
+      });
+      const archiveRows = (archiveRes.data.values ?? []) as string[][];
+      for (const row of archiveRows.slice(1)) {
+        if (row[0] && (row[4] ?? "pending") !== "rejected") {
+          archivedManNos.add(row[0]);
+        }
+      }
+    } catch {
+      // アーカイブ申請シートが未作成の場合は無視
+    }
+
     // gap-detector でステータスを確定
-    const engineers = deduped.map(e => toEngineer(e, ordersByManNo.get(e.manNo) ?? []));
+    const engineers = deduped.map(e =>
+      toEngineer(e, ordersByManNo.get(e.manNo) ?? [], archivedManNos.has(e.manNo))
+    );
 
     return NextResponse.json({ engineers });
   } catch (e: unknown) {

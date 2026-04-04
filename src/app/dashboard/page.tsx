@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { Engineer, STATUS_CONFIG, DEPTS, SALES_STAFF } from "@/types";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useAuth } from "@/lib/auth-context";
 import { loadCache, saveCache, formatCachedAt } from "@/lib/sheets-cache";
 
 const LOCS = ["全拠点", "東京", "大阪", "福岡"] as const;
-const STATUS_FILTER_LABELS = ["全て", "ギャップ発生", "期限迫る", "正常", "当月終了"];
+const STATUS_FILTER_LABELS = ["全て", "ギャップ発生", "期限迫る", "正常", "当月終了", "アーカイブ候補"];
+
+const AUTO_REFRESH_MS = 5 * 60 * 1000; // 5分
 
 function daysRemaining(contract: string): number | null {
   if (!contract) return null;
@@ -33,6 +35,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
   const [myOnly, setMyOnly] = useState(false);
   const [search, setSearch] = useState("");
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
+  const [archiving, setArchiving] = useState<number | null>(null);
 
   // 現在のユーザー名（メールアドレスからマッピング）
   const currentTantou = useMemo(() => {
@@ -40,7 +43,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
     return Object.entries(SALES_STAFF).find(([, v]) => v === email)?.[0] ?? "";
   }, [user]);
 
-  const syncFromSheets = async () => {
+  const syncFromSheets = useCallback(async () => {
     if (!accessToken) return;
     setSyncing(true);
     setFetchError(null);
@@ -63,7 +66,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
     } finally {
       setSyncing(false);
     }
-  };
+  }, [accessToken, user?.email]);
 
   // 初回: キャッシュがあればすぐ表示、なければ API へ（accessToken 確定後）
   useEffect(() => {
@@ -81,15 +84,64 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken]);
 
-  const handleArchive = (manNo: number) => {
-    setEngineers(prev => prev.map(e => e.manNo === manNo ? { ...e, status: "archived" } : e));
+  // 自動リフレッシュ: 5分間隔 + タブ復帰時
+  useEffect(() => {
+    if (!accessToken) return;
+
+    const interval = setInterval(() => { syncFromSheets(); }, AUTO_REFRESH_MS);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        syncFromSheets();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [accessToken, syncFromSheets]);
+
+  const handleArchive = async (manNo: number, name: string) => {
+    if (!accessToken) return;
+    setArchiving(manNo);
+    try {
+      const r = await fetch("/api/archive", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-google-access-token": accessToken,
+        },
+        body: JSON.stringify({
+          manNo: String(manNo),
+          name,
+          requestedBy: user?.email ?? "",
+        }),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        setEngineers(prev => prev.map(e => e.manNo === manNo ? { ...e, status: "archived" as const } : e));
+      } else {
+        setFetchError(d.error ?? "アーカイブ申請に失敗しました");
+      }
+    } catch {
+      setFetchError("アーカイブ申請に失敗しました");
+    } finally {
+      setArchiving(null);
+    }
   };
 
   const filtered = useMemo(() => {
     return engineers.filter(e => {
-      if (e.status === "archived") return false;
+      // アーカイブ候補はフィルタ選択時のみ表示
+      if (statusFilter === "アーカイブ候補") {
+        if (e.status !== "archived") return false;
+      } else {
+        if (e.status === "archived") return false;
+      }
       if (locFilter !== "全拠点" && e.loc !== locFilter) return false;
-      if (statusFilter !== "全て") {
+      if (statusFilter !== "全て" && statusFilter !== "アーカイブ候補") {
         const key = Object.entries(STATUS_CONFIG).find(([, v]) => v.label === statusFilter)?.[0];
         if (key && e.status !== key) return false;
       }
@@ -110,6 +162,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
       expiring: active.filter(e => e.status === "expiring").length,
       ending:   active.filter(e => e.status === "ending").length,
       normal:   active.filter(e => e.status === "normal").length,
+      archived: engineers.filter(e => e.status === "archived").length,
       byLoc,
     };
   }, [engineers]);
@@ -122,8 +175,16 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
     }
   }, [counts.gap, onGapCountChange]);
 
-  const sortOrder: Record<string, number> = { gap: 0, expiring: 1, ending: 2, normal: 3 };
+  const sortOrder: Record<string, number> = { gap: 0, expiring: 1, ending: 2, normal: 3, archived: 4 };
   const sorted = [...filtered].sort((a, b) => (sortOrder[a.status] ?? 9) - (sortOrder[b.status] ?? 9));
+
+  // 拠点別スタックバー用のカラーマップ
+  const statusColors: Record<string, string> = {
+    gap: "#DC2626", expiring: "#D97706", ending: "#EA580C", normal: "#059669",
+  };
+  const statusLabels: Record<string, string> = {
+    gap: "ギャップ", expiring: "期限迫る", ending: "当月終了", normal: "正常",
+  };
 
   return (
     <div>
@@ -170,13 +231,13 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
         </div>
       ) : (
         <>
-          {/* Metrics */}
+          {/* Metrics — CLAUDE.md仕様: ギャップ発生数、期限14日以内、当月終了、正常稼働 */}
           <div className="grid grid-cols-4 gap-3.5 mb-6">
             {[
-              { label: "監視中",      val: counts.total,    color: "#3b82f6", bg: "#eff6ff", border: "#bfdbfe", icon: "👥" },
               { label: "ギャップ発生", val: counts.gap,      color: "#dc2626", bg: "#fef2f2", border: "#fecaca", icon: "🚨" },
               { label: "期限14日以内", val: counts.expiring, color: "#d97706", bg: "#fffbeb", border: "#fde68a", icon: "⏰" },
               { label: "当月終了",    val: counts.ending,   color: "#ea580c", bg: "#fff7ed", border: "#fed7aa", icon: "📅" },
+              { label: "正常稼働",    val: counts.normal,   color: "#059669", bg: "#ecfdf5", border: "#a7f3d0", icon: "✓" },
             ].map(m => (
               <div key={m.label} className="relative overflow-hidden rounded-xl p-4" style={{ background: m.bg, border: `1.5px solid ${m.border}` }}>
                 <p className="text-xs font-medium mb-1" style={{ color: m.color }}>{m.label}</p>
@@ -189,17 +250,43 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
             ))}
           </div>
 
-          {/* Location breakdown */}
-          <div className="flex gap-2.5 mb-5 flex-wrap">
-            {Object.entries(counts.byLoc).map(([loc, c]) => (
-              <div key={loc} className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs">
-                <span className="font-semibold text-slate-700">{loc}</span>
-                <span className="text-red-600">⬤ {c.gap}</span>
-                <span className="text-amber-600">⬤ {c.expiring}</span>
-                <span className="text-orange-600">⬤ {c.ending}</span>
-                <span className="text-emerald-600">⬤ {c.normal}</span>
-              </div>
-            ))}
+          {/* Location breakdown — スタック横棒バー */}
+          <div className="mb-5 space-y-2">
+            {Object.entries(counts.byLoc).map(([loc, c]) => {
+              const total = Object.values(c).reduce((s, n) => s + n, 0);
+              if (total === 0) return null;
+              return (
+                <div key={loc} className="flex items-center gap-3">
+                  <span className="text-xs font-semibold text-slate-700 w-10 shrink-0">{loc}</span>
+                  <div className="flex-1 flex h-6 rounded-md overflow-hidden bg-slate-100">
+                    {(["gap", "expiring", "ending", "normal"] as const).map(st => {
+                      const n = c[st] ?? 0;
+                      if (n === 0) return null;
+                      const pct = (n / total) * 100;
+                      return (
+                        <div
+                          key={st}
+                          title={`${statusLabels[st]}: ${n}件`}
+                          className="flex items-center justify-center text-[10px] font-bold text-white transition-all"
+                          style={{ width: `${pct}%`, backgroundColor: statusColors[st], minWidth: n > 0 ? "24px" : 0 }}
+                        >
+                          {n}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <span className="text-xs text-slate-500 w-10 text-right">{total}名</span>
+                </div>
+              );
+            })}
+            <div className="flex gap-4 text-[10px] text-slate-500 mt-1">
+              {Object.entries(statusLabels).map(([key, label]) => (
+                <span key={key} className="flex items-center gap-1">
+                  <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ backgroundColor: statusColors[key] }} />
+                  {label}
+                </span>
+              ))}
+            </div>
           </div>
 
           {/* Filters */}
@@ -260,7 +347,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
                   <div
                     onClick={() => setExpandedRow(isExpanded ? null : e.manNo)}
                     className={`grid grid-cols-[120px_90px_1fr_1fr_90px_56px_150px_80px] px-4 py-3 items-center text-sm border-b border-slate-50 cursor-pointer transition-colors
-                      ${e.status === "gap" ? "bg-red-50 hover:bg-red-100" : isExpanded ? "bg-slate-50" : "bg-white hover:bg-slate-50"}`}
+                      ${e.status === "gap" ? "bg-red-50 hover:bg-red-100" : e.status === "archived" ? "bg-slate-50 hover:bg-slate-100" : isExpanded ? "bg-slate-50" : "bg-white hover:bg-slate-50"}`}
                   >
                     <span><StatusBadge status={e.status} /></span>
                     <span className="font-mono text-xs text-slate-700">{e.manNo}</span>
@@ -290,18 +377,26 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
                       <span className="text-xs text-slate-700">顧客コード: <b>{e.code}</b></span>
                       <span className="text-xs text-slate-700">区分: {e.type}</span>
                       <div className="ml-auto flex gap-2">
-                        <button
-                          onClick={ev => { ev.stopPropagation(); onSwitch(e); }}
-                          className="px-3.5 py-1.5 rounded-lg border border-blue-300 bg-blue-50 text-blue-700 text-xs font-semibold hover:bg-blue-100 transition-colors"
-                        >
-                          注文書アップロード
-                        </button>
-                        <button
-                          onClick={ev => { ev.stopPropagation(); handleArchive(e.manNo); }}
-                          className="px-3.5 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-100 transition-colors"
-                        >
-                          アーカイブ申請
-                        </button>
+                        {e.status !== "archived" && (
+                          <>
+                            <button
+                              onClick={ev => { ev.stopPropagation(); onSwitch(e); }}
+                              className="px-3.5 py-1.5 rounded-lg border border-blue-300 bg-blue-50 text-blue-700 text-xs font-semibold hover:bg-blue-100 transition-colors"
+                            >
+                              注文書アップロード
+                            </button>
+                            <button
+                              onClick={ev => { ev.stopPropagation(); handleArchive(e.manNo, e.name); }}
+                              disabled={archiving === e.manNo}
+                              className="px-3.5 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-100 transition-colors disabled:opacity-50"
+                            >
+                              {archiving === e.manNo ? "申請中…" : "アーカイブ申請"}
+                            </button>
+                          </>
+                        )}
+                        {e.status === "archived" && (
+                          <span className="text-xs text-slate-500">申請済み（月末一括確認）</span>
+                        )}
                       </div>
                     </div>
                   )}
@@ -312,6 +407,9 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
 
           <p className="mt-2.5 text-xs text-slate-600 text-right">
             {sorted.length} 件表示 / 全 {engineers.filter(e => e.status !== "archived").length} 件
+            {counts.archived > 0 && (
+              <span className="ml-2 text-slate-400">（アーカイブ候補: {counts.archived}件）</span>
+            )}
           </p>
         </>
       )}
