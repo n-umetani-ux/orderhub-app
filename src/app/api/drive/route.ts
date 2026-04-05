@@ -41,6 +41,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ link: res.data.webViewLink ?? res.data.id });
   } catch (e: unknown) {
     console.error("[drive API]", e);
-    return NextResponse.json({ error: "Driveへのアップロードに失敗しました" }, { status: 500 });
+    const detail = e instanceof Error ? e.message : String(e);
+    // Google API エラーの場合、レスポンスの詳細を含める
+    const gaxiosErr = e as { response?: { status?: number; data?: unknown } };
+    const apiStatus = gaxiosErr?.response?.status;
+    const apiData = gaxiosErr?.response?.data;
+    console.error("[drive API detail]", { detail, apiStatus, apiData });
+    return NextResponse.json(
+      { error: `Driveへのアップロードに失敗しました: ${detail}`, apiStatus, apiData },
+      { status: apiStatus ?? 500 },
+    );
   }
 }
