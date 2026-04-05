@@ -192,11 +192,11 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
       <div className="flex justify-between items-start mb-7">
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight">担当案件一覧・更新ステータス</h1>
-          <p className="text-sm text-slate-700 mt-1">稼働一覧 × 注文書台帳</p>
+          <p className="text-sm text-gray-600 mt-1">稼働一覧 × 注文書台帳</p>
         </div>
         <div className="flex items-center gap-2">
           {cachedAt && (
-            <span className="text-xs text-slate-600">最終取得: {formatCachedAt(cachedAt)}</span>
+            <span className="text-xs text-gray-700">最終取得: {formatCachedAt(cachedAt)}</span>
           )}
           {!accessToken ? (
             <button
@@ -257,7 +257,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
               if (total === 0) return null;
               return (
                 <div key={loc} className="flex items-center gap-3">
-                  <span className="text-xs font-semibold text-slate-700 w-10 shrink-0">{loc}</span>
+                  <span className="text-xs font-bold text-gray-800 w-10 shrink-0">{loc}</span>
                   <div className="flex-1 flex h-6 rounded-md overflow-hidden bg-slate-100">
                     {(["gap", "expiring", "ending", "normal"] as const).map(st => {
                       const n = c[st] ?? 0;
@@ -294,19 +294,19 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
             <select
               value={locFilter}
               onChange={e => setLocFilter(e.target.value)}
-              className="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white text-slate-700"
+              className="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white text-gray-900"
             >
               {LOCS.map(l => <option key={l}>{l}</option>)}
             </select>
             <select
               value={statusFilter}
               onChange={e => setStatusFilter(e.target.value)}
-              className="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white text-slate-700"
+              className="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white text-gray-900"
             >
               {STATUS_FILTER_LABELS.map(s => <option key={s}>{s}</option>)}
             </select>
             <label className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm cursor-pointer transition-all
-              ${myOnly ? "bg-blue-50 border-blue-300 text-blue-700" : "bg-white border-slate-300 text-slate-600"}`}>
+              ${myOnly ? "bg-blue-50 border-blue-300 text-blue-700" : "bg-white border-slate-300 text-gray-700"}`}>
               <input type="checkbox" checked={myOnly} onChange={e => setMyOnly(e.target.checked)} className="accent-blue-500" />
               自分の担当のみ（{currentTantou || "—"}）
             </label>
@@ -323,7 +323,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
 
           {/* Table */}
           <div className="rounded-xl border border-slate-200 overflow-hidden">
-            <div className="grid grid-cols-[120px_90px_1fr_1fr_90px_56px_150px_80px] px-4 py-2.5 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-700">
+            <div className="grid grid-cols-[120px_90px_1fr_1fr_90px_56px_150px_80px] px-4 py-2.5 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-gray-800">
               <span>ステータス</span>
               <span>manNo.</span>
               <span>氏名</span>
@@ -335,7 +335,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
             </div>
 
             {sorted.length === 0 && (
-              <div className="py-10 text-center text-slate-600 text-sm">該当する案件がありません</div>
+              <div className="py-10 text-center text-gray-700 text-sm">該当する案件がありません</div>
             )}
 
             {sorted.map(e => {
@@ -350,32 +350,32 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
                       ${e.status === "gap" ? "bg-red-50 hover:bg-red-100" : e.status === "archived" ? "bg-slate-50 hover:bg-slate-100" : isExpanded ? "bg-slate-50" : "bg-white hover:bg-slate-50"}`}
                   >
                     <span><StatusBadge status={e.status} /></span>
-                    <span className="font-mono text-xs text-slate-700">{e.manNo}</span>
-                    <span className="font-semibold text-slate-900">
+                    <span className="font-mono text-xs text-gray-800">{e.manNo}</span>
+                    <span className="font-semibold text-gray-900">
                       {e.name}
                       {e.type === "BP" && (
                         <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">BP</span>
                       )}
                     </span>
-                    <span className="text-slate-800">{e.customer}</span>
-                    <span className="text-slate-700 text-xs">{e.tantou}</span>
-                    <span className="text-xs text-slate-700">{e.loc}</span>
-                    <span className={`text-xs ${days !== null && days < 0 ? "text-red-600" : days !== null && days <= 14 ? "text-amber-600" : "text-slate-700"}`}>
+                    <span className="text-gray-900">{e.customer}</span>
+                    <span className="text-gray-800 text-xs">{e.tantou}</span>
+                    <span className="text-xs text-gray-800">{e.loc}</span>
+                    <span className={`text-xs font-medium ${days !== null && days < 0 ? "text-red-700" : days !== null && days <= 14 ? "text-amber-700" : "text-gray-800"}`}>
                       {start} 〜 {end}
                     </span>
-                    <span className="text-right text-xs text-slate-600">{isExpanded ? "▲" : "▼"}</span>
+                    <span className="text-right text-xs text-gray-500">{isExpanded ? "▲" : "▼"}</span>
                   </div>
 
                   {isExpanded && (
                     <div className="px-4 py-3 pl-56 bg-slate-50 border-b border-slate-200 flex items-center gap-4">
-                      <span className="text-xs text-slate-700">
+                      <span className="text-xs text-gray-800">
                         残日数:{" "}
                         <b className={days === null ? "" : days < 0 ? "text-red-600" : days <= 14 ? "text-amber-600" : "text-emerald-600"}>
                           {days === null ? "—" : days < 0 ? `${Math.abs(days)}日超過` : `${days}日`}
                         </b>
                       </span>
-                      <span className="text-xs text-slate-700">顧客コード: <b>{e.code}</b></span>
-                      <span className="text-xs text-slate-700">区分: {e.type}</span>
+                      <span className="text-xs text-gray-800">顧客コード: <b>{e.code}</b></span>
+                      <span className="text-xs text-gray-800">区分: {e.type}</span>
                       <div className="ml-auto flex gap-2">
                         {e.status !== "archived" && (
                           <>
@@ -388,7 +388,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
                             <button
                               onClick={ev => { ev.stopPropagation(); handleArchive(e.manNo, e.name); }}
                               disabled={archiving === e.manNo}
-                              className="px-3.5 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-100 transition-colors disabled:opacity-50"
+                              className="px-3.5 py-1.5 rounded-lg border border-slate-300 bg-white text-gray-800 text-xs font-semibold hover:bg-slate-100 transition-colors disabled:opacity-50"
                             >
                               {archiving === e.manNo ? "申請中…" : "アーカイブ申請"}
                             </button>
@@ -405,7 +405,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
             })}
           </div>
 
-          <p className="mt-2.5 text-xs text-slate-600 text-right">
+          <p className="mt-2.5 text-xs text-gray-700 text-right">
             {sorted.length} 件表示 / 全 {engineers.filter(e => e.status !== "archived").length} 件
             {counts.archived > 0 && (
               <span className="ml-2 text-slate-400">（アーカイブ候補: {counts.archived}件）</span>

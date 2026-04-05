@@ -18,3 +18,32 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* ダークモードを完全無効化: OS設定に関わらずライトモード固定 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #ffffff !important;
+    --foreground: #171717 !important;
+    color-scheme: light !important;
+  }
+}
+
+/* フォーム要素のテキスト色を明示指定（ブラウザのdark theme対策） */
+input, select, textarea {
+  color: #1e293b !important;  /* slate-800 */
+  background-color: #ffffff;
+  color-scheme: light;
+}
+input::placeholder, textarea::placeholder {
+  color: #94a3b8 !important;  /* slate-400 */
+}
+option {
+  color: #1e293b;
+  background-color: #ffffff;
+}
+
+/* ドロップダウン/ポップオーバーの文字色を保証 */
+[role="listbox"], [role="option"] {
+  color: #1e293b;
+  background-color: #ffffff;
+}

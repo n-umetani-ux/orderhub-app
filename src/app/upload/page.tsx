@@ -26,6 +26,10 @@ interface PdfEntry {
   autoSelected: SheetsEngineer | null;
 }
 
+/** 命名規約: YYMMDD_部署コード_顧客コード顧客略称_社員番号.pdf
+ * 例: 260401_1010_C0105SCSK Minoriソリューションズ_170156.pdf
+ * multi例: 260401_1010_C0105SCSK_multi-1.pdf
+ */
 function buildFileName(
   startDate: string,
   dept: string,
@@ -35,13 +39,14 @@ function buildFileName(
   manNo: number | null,
   multiLowestManNo?: string
 ): string {
-  const d   = startDate.replace(/-/g, "").slice(2) || "______";
-  const cc  = customerCode || "____";
-  const cn  = customerName || "____";
+  const d   = startDate ? startDate.replace(/-/g, "").slice(2) : "YYMMDD";
+  const customer = customerCode && customerName
+    ? `${customerCode}${customerName}`
+    : customerCode || customerName || "（顧客未入力）";
   const tid = targetType === "multi(チーム)"
-    ? `${multiLowestManNo ?? "______"}multi`
-    : String(manNo ?? "______");
-  return `${d}_${dept}_${cc}${cn}_${tid}.pdf`;
+    ? `${multiLowestManNo || "（番号未入力）"}multi`
+    : manNo != null ? String(manNo) : "（番号未入力）";
+  return `${d}_${dept}_${customer}_${tid}.pdf`;
 }
 
 /** PDF からテキストを抽出し、日付・氏名を解析する純粋関数 */
@@ -511,7 +516,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
         <div className="grid grid-cols-2 gap-7">
           {/* Left: PDF upload + file list */}
           <div>
-            <h2 className="text-sm font-semibold text-slate-700 mb-3">1. 対象ファイルの登録</h2>
+            <h2 className="text-sm font-bold text-gray-900 mb-3">1. 対象ファイルの登録</h2>
             <div
               onDragOver={e => { e.preventDefault(); setDragging(true); }}
               onDragLeave={() => setDragging(false)}
@@ -557,8 +562,8 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                       ) : "📄"}
                     </span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-slate-800 truncate">{entry.file.name}</p>
-                      <p className="text-[10px] text-slate-500">
+                      <p className="text-xs font-semibold text-gray-900 truncate">{entry.file.name}</p>
+                      <p className="text-[10px] text-gray-500">
                         {entry.extracting
                           ? "テキスト抽出中…"
                           : `${entry.rawText.length}字抽出`
@@ -608,11 +613,11 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
 
           {/* Right: Form */}
           <div>
-            <h2 className="text-sm font-semibold text-slate-700 mb-3">2. 契約詳細・送信</h2>
+            <h2 className="text-sm font-bold text-gray-900 mb-3">2. 契約詳細・送信</h2>
             <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
               {/* Target type */}
               <div>
-                <label className="text-xs font-semibold text-slate-700 mb-2 block">対象区分</label>
+                <label className="text-xs font-semibold text-gray-800 mb-2 block">対象区分</label>
                 <div className="flex gap-1.5">
                   {(["社員番号", "BP番号", "multi(チーム)"] as TargetType[]).map(t => (
                     <button
@@ -630,7 +635,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
               {/* Target search */}
               {targetType !== "multi(チーム)" && (
                 <div className="relative">
-                  <label className="text-xs font-semibold text-slate-700 mb-2 block">
+                  <label className="text-xs font-semibold text-gray-800 mb-2 block">
                     対象者（manNo. または氏名で検索）
                     {cachedCount > 0
                       ? <span className="ml-2 font-normal text-emerald-600">{cachedCount}件利用可能</span>
@@ -643,7 +648,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                     onFocus={() => { if (searchVal.length > 0) handleSearch(searchVal); }}
                     onBlur={() => setTimeout(() => setSuggestions([]), 150)}
                     placeholder="例: 170156 または 井上"
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
+                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm text-gray-900 bg-white"
                   />
                   {suggestions.length > 0 && (
                     <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-48 overflow-auto mt-1">
@@ -651,10 +656,10 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                         <div
                           key={s.manNo}
                           onMouseDown={() => selectEngineer(s)}
-                          className="px-4 py-2 text-sm cursor-pointer hover:bg-slate-50 flex justify-between border-b border-slate-50"
+                          className="px-4 py-2 text-sm text-gray-900 cursor-pointer hover:bg-blue-50 flex justify-between border-b border-slate-100"
                         >
-                          <span><b>{s.manNo}</b> {s.name}</span>
-                          <span className="text-slate-600 text-xs">{s.customer} / {s.loc}</span>
+                          <span className="text-gray-900 font-medium"><b>{s.manNo}</b> {s.name}</span>
+                          <span className="text-gray-600 text-xs">{s.customer} / {s.loc}</span>
                         </div>
                       ))}
                     </div>
@@ -678,23 +683,23 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
 
               {/* Contract period */}
               <div>
-                <label className="text-xs font-semibold text-slate-700 mb-2 block">注文書に記載の契約期間</label>
+                <label className="text-xs font-semibold text-gray-800 mb-2 block">注文書に記載の契約期間</label>
                 <div className="flex items-center gap-2">
-                  <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="flex-1 px-2.5 py-2 rounded-lg border border-slate-300 text-sm" />
+                  <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="flex-1 px-2.5 py-2 rounded-lg border border-slate-300 text-sm text-gray-900 bg-white" />
                   <span className="text-slate-600">〜</span>
-                  <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="flex-1 px-2.5 py-2 rounded-lg border border-slate-300 text-sm" />
+                  <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="flex-1 px-2.5 py-2 rounded-lg border border-slate-300 text-sm text-gray-900 bg-white" />
                 </div>
               </div>
 
               {/* Issue date + dept */}
               <div className="grid grid-cols-2 gap-2.5">
                 <div>
-                  <label className="text-xs font-semibold text-slate-700 mb-2 block">発注日（参考）</label>
-                  <input type="date" value={issueDate} onChange={e => setIssueDate(e.target.value)} className="w-full px-2.5 py-2 rounded-lg border border-slate-300 text-sm" />
+                  <label className="text-xs font-semibold text-gray-800 mb-2 block">発注日（参考）</label>
+                  <input type="date" value={issueDate} onChange={e => setIssueDate(e.target.value)} className="w-full px-2.5 py-2 rounded-lg border border-slate-300 text-sm text-gray-900 bg-white" />
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-slate-700 mb-2 block">部署</label>
-                  <select value={dept} onChange={e => setDept(e.target.value)} className="w-full px-2.5 py-2 rounded-lg border border-slate-300 text-sm bg-white">
+                  <label className="text-xs font-semibold text-gray-800 mb-2 block">部署</label>
+                  <select value={dept} onChange={e => setDept(e.target.value)} className="w-full px-2.5 py-2 rounded-lg border border-slate-300 text-sm text-gray-900 bg-white">
                     {DEPTS.map(d => <option key={d.code} value={d.code}>{d.code}: {d.name}</option>)}
                   </select>
                 </div>
@@ -703,7 +708,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
               {/* multi: メンバー選択 */}
               {targetType === "multi(チーム)" && (
                 <div>
-                  <label className="text-xs font-semibold text-slate-700 mb-2 block">
+                  <label className="text-xs font-semibold text-gray-800 mb-2 block">
                     チームメンバー（注文書の対象者を追加）
                     {cachedCount > 0
                       ? <span className="ml-2 font-normal text-emerald-600">{cachedCount}件利用可能</span>
@@ -737,7 +742,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                       onFocus={() => { if (multiSearchVal.length > 0) handleMultiSearch(multiSearchVal); }}
                       onBlur={() => setTimeout(() => setMultiSuggestions([]), 150)}
                       placeholder="manNo. または氏名でメンバーを追加"
-                      className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
+                      className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm text-gray-900 bg-white"
                     />
                     {multiSuggestions.length > 0 && (
                       <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-48 overflow-auto mt-1">
@@ -745,10 +750,10 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                           <div
                             key={s.manNo}
                             onMouseDown={() => addMultiMember(s)}
-                            className="px-4 py-2 text-sm cursor-pointer hover:bg-slate-50 flex justify-between border-b border-slate-50"
+                            className="px-4 py-2 text-sm text-gray-900 cursor-pointer hover:bg-blue-50 flex justify-between border-b border-slate-100"
                           >
-                            <span><b>{s.manNo}</b> {s.name}</span>
-                            <span className="text-slate-600 text-xs">{s.customer} / {s.loc}</span>
+                            <span className="text-gray-900 font-medium"><b>{s.manNo}</b> {s.name}</span>
+                            <span className="text-gray-600 text-xs">{s.customer} / {s.loc}</span>
                           </div>
                         ))}
                       </div>
@@ -759,8 +764,8 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
 
               {/* File name preview */}
               <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
-                <p className="text-[10px] text-slate-700 mb-1">生成ファイル名プレビュー</p>
-                <p className="text-xs font-bold text-slate-800 font-mono break-all">{fileName}</p>
+                <p className="text-[10px] text-gray-600 mb-1">生成ファイル名プレビュー</p>
+                <p className="text-xs font-bold text-gray-900 font-mono break-all">{fileName}</p>
               </div>
 
               {uploadError && (
