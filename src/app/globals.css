@@ -2,8 +2,8 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
-  color-scheme: light;
+  --foreground: #111827;
+  color-scheme: light !important;
 }
 
 @theme inline {
@@ -13,37 +13,49 @@
   --font-mono: var(--font-geist-mono);
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
-}
-
-/* ダークモードを完全無効化: OS設定に関わらずライトモード固定 */
+/* ダークモードを完全無効化 */
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #ffffff !important;
-    --foreground: #171717 !important;
+    --foreground: #111827 !important;
     color-scheme: light !important;
+  }
+  html, body {
+    background-color: #ffffff !important;
+    color: #111827 !important;
   }
 }
 
-/* フォーム要素のテキスト色を明示指定（ブラウザのdark theme対策） */
-input, select, textarea {
-  color: #1e293b !important;  /* slate-800 */
-  background-color: #ffffff;
-  color-scheme: light;
-}
-input::placeholder, textarea::placeholder {
-  color: #94a3b8 !important;  /* slate-400 */
-}
-option {
-  color: #1e293b;
-  background-color: #ffffff;
+html {
+  color-scheme: light !important;
 }
 
-/* ドロップダウン/ポップオーバーの文字色を保証 */
-[role="listbox"], [role="option"] {
-  color: #1e293b;
-  background-color: #ffffff;
+body {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* 全テキスト要素の色を強制 */
+h1, h2, h3, h4, h5, h6, p, span, div, label, a, li, td, th, b, strong, code, pre {
+  color: inherit;
+}
+
+/* フォーム要素: ブラウザのdark themeに絶対に負けない */
+input, select, textarea {
+  color: #111827 !important;
+  background-color: #ffffff !important;
+  color-scheme: light !important;
+  -webkit-text-fill-color: #111827 !important;
+}
+input::placeholder, textarea::placeholder {
+  color: #9ca3af !important;
+  -webkit-text-fill-color: #9ca3af !important;
+}
+option {
+  color: #111827 !important;
+  background-color: #ffffff !important;
+}
+button {
+  color-scheme: light !important;
 }

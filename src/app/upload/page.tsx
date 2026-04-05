@@ -491,7 +491,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
         >
           ← 戻る
         </button>
-        <h1 className="text-xl font-bold text-slate-900 tracking-tight">注文書の登録・メタデータ付与</h1>
+        <h1 className="text-xl font-bold tracking-tight" style={{ color: "#0f172a" }}>注文書の登録・メタデータ付与</h1>
         {pdfEntries.length > 0 && (
           <span className="ml-auto text-xs text-slate-500">
             {pdfEntries.length}件のPDF
@@ -648,18 +648,20 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                     onFocus={() => { if (searchVal.length > 0) handleSearch(searchVal); }}
                     onBlur={() => setTimeout(() => setSuggestions([]), 150)}
                     placeholder="例: 170156 または 井上"
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm text-gray-900 bg-white"
+                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
+                    style={{ color: "#111827", backgroundColor: "#ffffff" }}
                   />
                   {suggestions.length > 0 && (
-                    <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-48 overflow-auto mt-1">
+                    <div className="absolute top-full left-0 right-0 border border-slate-200 rounded-lg shadow-xl z-50 max-h-48 overflow-auto mt-1" style={{ backgroundColor: "#ffffff" }}>
                       {suggestions.map(s => (
                         <div
                           key={s.manNo}
                           onMouseDown={() => selectEngineer(s)}
-                          className="px-4 py-2 text-sm text-gray-900 cursor-pointer hover:bg-blue-50 flex justify-between border-b border-slate-100"
+                          className="px-4 py-2 text-sm cursor-pointer hover:bg-blue-50 flex justify-between border-b border-slate-100"
+                          style={{ color: "#111827" }}
                         >
-                          <span className="text-gray-900 font-medium"><b>{s.manNo}</b> {s.name}</span>
-                          <span className="text-gray-600 text-xs">{s.customer} / {s.loc}</span>
+                          <span style={{ color: "#111827", fontWeight: 600 }}><b>{s.manNo}</b> {s.name}</span>
+                          <span style={{ color: "#4b5563", fontSize: "12px" }}>{s.customer} / {s.loc}</span>
                         </div>
                       ))}
                     </div>
@@ -685,9 +687,9 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
               <div>
                 <label className="text-xs font-semibold text-gray-800 mb-2 block">注文書に記載の契約期間</label>
                 <div className="flex items-center gap-2">
-                  <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="flex-1 px-2.5 py-2 rounded-lg border border-slate-300 text-sm text-gray-900 bg-white" />
+                  <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="flex-1 px-2.5 py-2 rounded-lg border border-slate-300 text-sm" style={{ color: "#111827", backgroundColor: "#fff" }} />
                   <span className="text-slate-600">〜</span>
-                  <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="flex-1 px-2.5 py-2 rounded-lg border border-slate-300 text-sm text-gray-900 bg-white" />
+                  <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="flex-1 px-2.5 py-2 rounded-lg border border-slate-300 text-sm" style={{ color: "#111827", backgroundColor: "#fff" }} />
                 </div>
               </div>
 
@@ -695,11 +697,11 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
               <div className="grid grid-cols-2 gap-2.5">
                 <div>
                   <label className="text-xs font-semibold text-gray-800 mb-2 block">発注日（参考）</label>
-                  <input type="date" value={issueDate} onChange={e => setIssueDate(e.target.value)} className="w-full px-2.5 py-2 rounded-lg border border-slate-300 text-sm text-gray-900 bg-white" />
+                  <input type="date" value={issueDate} onChange={e => setIssueDate(e.target.value)} className="w-full px-2.5 py-2 rounded-lg border border-slate-300 text-sm" style={{ color: "#111827", backgroundColor: "#fff" }} />
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-gray-800 mb-2 block">部署</label>
-                  <select value={dept} onChange={e => setDept(e.target.value)} className="w-full px-2.5 py-2 rounded-lg border border-slate-300 text-sm text-gray-900 bg-white">
+                  <select value={dept} onChange={e => setDept(e.target.value)} className="w-full px-2.5 py-2 rounded-lg border border-slate-300 text-sm" style={{ color: "#111827", backgroundColor: "#fff" }}>
                     {DEPTS.map(d => <option key={d.code} value={d.code}>{d.code}: {d.name}</option>)}
                   </select>
                 </div>
@@ -742,7 +744,8 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                       onFocus={() => { if (multiSearchVal.length > 0) handleMultiSearch(multiSearchVal); }}
                       onBlur={() => setTimeout(() => setMultiSuggestions([]), 150)}
                       placeholder="manNo. または氏名でメンバーを追加"
-                      className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm text-gray-900 bg-white"
+                      className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
+                      style={{ color: "#111827", backgroundColor: "#fff" }}
                     />
                     {multiSuggestions.length > 0 && (
                       <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-48 overflow-auto mt-1">
@@ -750,10 +753,11 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                           <div
                             key={s.manNo}
                             onMouseDown={() => addMultiMember(s)}
-                            className="px-4 py-2 text-sm text-gray-900 cursor-pointer hover:bg-blue-50 flex justify-between border-b border-slate-100"
+                            className="px-4 py-2 text-sm cursor-pointer hover:bg-blue-50 flex justify-between border-b border-slate-100"
+                            style={{ color: "#111827" }}
                           >
-                            <span className="text-gray-900 font-medium"><b>{s.manNo}</b> {s.name}</span>
-                            <span className="text-gray-600 text-xs">{s.customer} / {s.loc}</span>
+                            <span style={{ color: "#111827", fontWeight: 600 }}><b>{s.manNo}</b> {s.name}</span>
+                            <span style={{ color: "#4b5563", fontSize: "12px" }}>{s.customer} / {s.loc}</span>
                           </div>
                         ))}
                       </div>
