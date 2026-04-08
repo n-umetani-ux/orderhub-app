@@ -4,16 +4,7 @@ import { Readable } from "stream";
 
 const DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID!;
 
-function getServiceAuth() {
-  const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON!);
-  return new google.auth.GoogleAuth({
-    credentials,
-    scopes: ["https://www.googleapis.com/auth/drive.file"],
-  });
-}
-
 export async function POST(req: NextRequest) {
-  // 認証チェック（ログイン済みであることの確認用）
   const accessToken = req.headers.get("x-google-access-token");
   if (!accessToken) {
     return NextResponse.json({ error: "アクセストークンがありません" }, { status: 401 });
@@ -32,9 +23,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "GOOGLE_DRIVE_FOLDER_ID が未設定です" }, { status: 500 });
     }
 
-    // サービスアカウントで認証（フォルダへの書き込み権限が確実）
-    const auth = getServiceAuth();
-    const drive = google.drive({ version: "v3", auth });
+    // ユーザーのOAuthトークンで認証（Drive容量はユーザーのもの）
+    const oauth2 = new google.auth.OAuth2();
+    oauth2.setCredentials({ access_token: accessToken });
+    const drive = google.drive({ version: "v3", auth: oauth2 });
 
     const buffer = Buffer.from(await file.arrayBuffer());
     const stream = Readable.from(buffer);
