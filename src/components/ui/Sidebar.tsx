@@ -69,8 +69,8 @@ export function Sidebar({ screen, onNavigate, gapCount }: SidebarProps) {
             {initial}
           </div>
           <div className="overflow-hidden">
-            <p className="text-sm font-semibold text-white truncate">{name}</p>
-            <p className="text-xs text-slate-300 truncate">{user?.email}</p>
+            <p className="text-sm font-semibold truncate" style={{ color: "#ffffff", WebkitTextFillColor: "#ffffff" }}>{name}</p>
+            <p className="text-xs truncate" style={{ color: "#cbd5e1", WebkitTextFillColor: "#cbd5e1" }}>{user?.email}</p>
           </div>
         </div>
         <button
