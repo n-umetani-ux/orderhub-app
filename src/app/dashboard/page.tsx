@@ -188,12 +188,14 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
       const activeMonths = e.activeMonths ?? [];
       const months: Record<string, "covered" | "gap" | "na"> = {};
       calendarMonths.forEach(ym => {
-        // この月に稼働一覧に存在するか
-        const isActiveThisMonth = activeMonths.length === 0 || activeMonths.includes(ym);
-        if (!isActiveThisMonth) {
-          months[ym] = "na"; // 稼働対象外
+        const hasCovering = engOrders.some(o => orderCoversMonth(o, ym));
+        if (hasCovering) {
+          // 注文書があれば稼働一覧に関係なくカバー済み
+          months[ym] = "covered";
         } else {
-          months[ym] = engOrders.some(o => orderCoversMonth(o, ym)) ? "covered" : "gap";
+          // 注文書がない場合、その月に稼働一覧にいるかで判定
+          const isActiveThisMonth = activeMonths.length === 0 || activeMonths.includes(ym);
+          months[ym] = isActiveThisMonth ? "gap" : "na";
         }
       });
       map[e.manNo] = months;
