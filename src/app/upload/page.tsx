@@ -651,7 +651,26 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                   {(["社員番号", "BP番号", "multi(チーム)"] as TargetType[]).map(t => (
                     <button
                       key={t}
-                      onClick={() => { setTargetType(t); setSelected(null); setSearchVal(""); setMultiMembers([]); setMultiLowestManNo(""); setMultiCustomerCode(""); setMultiCustomerName(""); }}
+                      onClick={() => {
+                        setTargetType(t);
+                        setSelected(null);
+                        setSearchVal("");
+                        setMultiCustomerCode("");
+                        setMultiCustomerName("");
+                        // multi切替時にPDFから検出された候補を自動追加
+                        if (t === "multi(チーム)" && activeEntry && activeEntry.nameMatches.length > 0) {
+                          const members = activeEntry.nameMatches;
+                          setMultiMembers(members);
+                          const lowest = members.reduce((min, m) => m.manNo < min ? m.manNo : min, members[0].manNo);
+                          setMultiLowestManNo(lowest);
+                          // 最初のメンバーから部署設定
+                          const matchDept = DEPTS.find(d => d.loc === members[0].loc);
+                          if (matchDept) setDept(matchDept.code);
+                        } else {
+                          setMultiMembers([]);
+                          setMultiLowestManNo("");
+                        }
+                      }}
                       className={`px-4 py-1.5 rounded-lg border text-xs font-semibold transition-all
                         ${targetType === t ? "border-blue-400 bg-blue-50 text-blue-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
                     >
