@@ -1,10 +1,13 @@
 /**
  * 月別の稼働一覧スプレッドシートID管理
  *
- * 毎月の稼働一覧は別々のスプレッドシートに作成されるため、
- * 年月 → スプレッドシートID のマッピングを管理する。
+ * 毎月の稼働一覧は別々のスプレッドシートに作成される。
+ * 常に「当月 + 翌月」の2つを同時に参照し、データを結合する。
  *
- * 新しい月のスプレッドシートが作られたら、ここに追加する。
+ * 例: 4月 → 4月シート + 5月シート を両方読む
+ *     5月 → 5月シート + 6月シート を両方読む
+ *
+ * 新しい月のスプレッドシートが作られたら、ここにIDを1行追加する。
  */
 
 const MONTHLY_SHEET_IDS: Record<string, string> = {
@@ -13,24 +16,36 @@ const MONTHLY_SHEET_IDS: Record<string, string> = {
   "2026-05": "17QxNSoW5XTB0F9i5yl55FfINQu9W_702ltF0guVwGw4",
 };
 
-// デフォルト（MONTHLY_SHEET_IDSにない月の場合のフォールバック）
+// デフォルト（環境変数のフォールバック）
 const DEFAULT_SHEET_ID = process.env.GOOGLE_SHEETS_ID ?? "";
 
 /**
- * 現在の年月に対応する稼働一覧のスプレッドシートIDを返す
+ * 現在参照すべき稼働一覧スプレッドシートIDの一覧を返す
+ * 当月 + 翌月の最大2つ（存在するもののみ）
  */
-export function getCurrentMonthSheetId(): string {
+export function getActiveSheetIds(): { id: string; label: string }[] {
   const now = new Date();
-  const key = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  return MONTHLY_SHEET_IDS[key] ?? DEFAULT_SHEET_ID;
-}
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1; // 1-based
 
-/**
- * 指定年月に対応する稼働一覧のスプレッドシートIDを返す
- */
-export function getSheetIdForMonth(year: number, month: number): string {
-  const key = `${year}-${String(month).padStart(2, "0")}`;
-  return MONTHLY_SHEET_IDS[key] ?? DEFAULT_SHEET_ID;
+  const currentKey = `${year}-${String(month).padStart(2, "0")}`;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear = month === 12 ? year + 1 : year;
+  const nextKey = `${nextYear}-${String(nextMonth).padStart(2, "0")}`;
+
+  const result: { id: string; label: string }[] = [];
+
+  if (MONTHLY_SHEET_IDS[currentKey]) {
+    result.push({ id: MONTHLY_SHEET_IDS[currentKey], label: `${month}月` });
+  } else if (DEFAULT_SHEET_ID) {
+    result.push({ id: DEFAULT_SHEET_ID, label: `${month}月` });
+  }
+
+  if (MONTHLY_SHEET_IDS[nextKey]) {
+    result.push({ id: MONTHLY_SHEET_IDS[nextKey], label: `${nextMonth}月` });
+  }
+
+  return result;
 }
 
 /**

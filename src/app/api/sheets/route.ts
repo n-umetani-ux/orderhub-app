@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
 import { toEngineer, OrderRecord } from "@/lib/gap-detector";
-import { getCurrentMonthSheetId, getOrderLedgerSheetId } from "@/lib/monthly-sheets";
+import { getActiveSheetIds, getOrderLedgerSheetId } from "@/lib/monthly-sheets";
 
-const SPREADSHEET_ID = getCurrentMonthSheetId();
 const LEDGER_SHEET_ID = getOrderLedgerSheetId();
 
 const SECTION_MARKERS = ["待機一覧", "正社員エンジニア一覧", "個人事業主エンジニア一覧", "パートナーエンジニア一覧", "ENGチーム", "ENG_BP"];
@@ -78,31 +77,42 @@ export async function GET(req: NextRequest) {
     oauth2.setCredentials({ access_token: accessToken });
     const sheets = google.sheets({ version: "v4", auth: oauth2 });
 
-    const meta = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
-    const sheetNames = meta.data.sheets?.map(s => s.properties?.title ?? "") ?? [];
-    const targetSheets = sheetNames.filter(n => n in SHEET_LOCS);
+    // 当月＋翌月の稼働一覧スプレッドシートを両方読む
+    const activeSheets = getActiveSheetIds();
+    console.log("[sheets API] 参照スプレッドシート:", activeSheets.map(s => s.label));
 
     const raw = [];
-    for (const sheetName of targetSheets) {
-      const loc = SHEET_LOCS[sheetName];
-      const res = await sheets.spreadsheets.values.get({
-        spreadsheetId: SPREADSHEET_ID,
-        range: `${sheetName}!A:AE`,
-      });
-      const rows = (res.data.values ?? []) as string[][];
-      const sanitized = rows.map(row =>
-        row.map((cell, idx) => (SENSITIVE_COLS.has(idx) ? "" : cell))
-      );
-      raw.push(...parseRows(sanitized, loc));
+    for (const { id: spreadsheetId, label } of activeSheets) {
+      try {
+        const meta = await sheets.spreadsheets.get({ spreadsheetId });
+        const sheetNames = meta.data.sheets?.map(s => s.properties?.title ?? "") ?? [];
+        const targetSheets = sheetNames.filter(n => n in SHEET_LOCS);
+
+        for (const sheetName of targetSheets) {
+          const loc = SHEET_LOCS[sheetName];
+          const res = await sheets.spreadsheets.values.get({
+            spreadsheetId,
+            range: `${sheetName}!A:AE`,
+          });
+          const rows = (res.data.values ?? []) as string[][];
+          const sanitized = rows.map(row =>
+            row.map((cell, idx) => (SENSITIVE_COLS.has(idx) ? "" : cell))
+          );
+          raw.push(...parseRows(sanitized, loc));
+        }
+        console.log(`[sheets API] ${label}シート読み込み完了`);
+      } catch (err) {
+        console.warn(`[sheets API] ${label}シート読み込み失敗（未作成の可能性）:`, err);
+        // 翌月シートが未作成の場合はスキップ
+      }
     }
 
-    // manNo で重複除去（同じ番号が複数セクションに存在する場合、先行エントリ優先）
-    const seen = new Set<string>();
-    const deduped = raw.filter(e => {
-      if (seen.has(e.manNo)) return false;
-      seen.add(e.manNo);
-      return true;
-    });
+    // manNo で重複除去（同じ番号が複数シートに存在する場合、後のシート=翌月を優先）
+    const engineerMap = new Map<string, typeof raw[0]>();
+    for (const e of raw) {
+      engineerMap.set(e.manNo, e); // 後勝ち = 翌月データ優先
+    }
+    const deduped = Array.from(engineerMap.values());
 
     // 注文書台帳を取得してギャップ検知に使用
     let ordersByManNo = new Map<string, OrderRecord[]>();
