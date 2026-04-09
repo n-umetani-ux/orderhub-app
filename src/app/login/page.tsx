@@ -53,8 +53,8 @@ export default function LoginPage() {
           <div className="flex items-center gap-2 mb-8">
             <span className="text-3xl">📋</span>
             <div>
-              <h1 className="text-xl font-extrabold text-white tracking-tight">OrderHub</h1>
-              <p className="text-xs text-slate-500">注文書 期間ギャップ管理</p>
+              <h1 className="text-xl font-extrabold text-white tracking-tight">注文書管理システム</h1>
+              <p className="text-xs text-slate-500">期間ギャップ管理</p>
             </div>
           </div>
 

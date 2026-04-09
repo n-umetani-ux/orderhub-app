@@ -21,9 +21,9 @@ export function Sidebar({ screen, onNavigate, gapCount }: SidebarProps) {
       <div className="px-5 py-5 border-b border-white/10">
         <div className="flex items-center gap-2">
           <span className="text-xl">📋</span>
-          <span className="text-lg font-extrabold text-white tracking-tight">OrderHub</span>
+          <span className="text-lg font-extrabold tracking-tight" style={{ color: "#ffffff", WebkitTextFillColor: "#ffffff" }}>注文書管理システム</span>
         </div>
-        <p className="text-xs text-slate-500 mt-1">注文書 期間ギャップ管理</p>
+        <p className="text-xs mt-1" style={{ color: "#94a3b8", WebkitTextFillColor: "#94a3b8" }}>期間ギャップ管理</p>
       </div>
 
       {/* Nav */}
@@ -54,11 +54,12 @@ export function Sidebar({ screen, onNavigate, gapCount }: SidebarProps) {
           href="https://drive.google.com/drive/folders/1jIhIKa9b-Kzv3niWIsMRw51GS4IVjPFo"
           target="_blank"
           rel="noreferrer"
-          className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-sm text-left transition-all text-slate-400 hover:bg-white/5 hover:text-slate-200"
+          className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-sm text-left transition-all hover:bg-white/5"
+          style={{ color: "#94a3b8", WebkitTextFillColor: "#94a3b8" }}
         >
           <span className="text-base">📁</span>
           <span className="flex-1">注文書PDF フォルダ</span>
-          <span className="text-[10px] text-slate-500">↗</span>
+          <span className="text-[10px]" style={{ color: "#94a3b8", WebkitTextFillColor: "#94a3b8" }}>↗</span>
         </a>
       </nav>
 
@@ -75,7 +76,8 @@ export function Sidebar({ screen, onNavigate, gapCount }: SidebarProps) {
         </div>
         <button
           onClick={signOut}
-          className="mt-3 w-full text-xs text-slate-500 hover:text-slate-300 transition-colors text-left"
+          className="mt-3 w-full text-xs transition-colors text-left"
+          style={{ color: "#94a3b8", WebkitTextFillColor: "#94a3b8" }}
         >
           ログアウト
         </button>
