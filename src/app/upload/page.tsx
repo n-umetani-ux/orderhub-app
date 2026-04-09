@@ -226,11 +226,14 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
   /** キャッシュから顧客コード＋顧客名のユニークリストを生成 */
   const customerList = useMemo(() => {
     const cache = loadCache(user?.email ?? "");
-    const engineers = (cache?.engineers ?? []) as SheetsEngineer[];
+    const engineers = (cache?.engineers ?? []) as Record<string, unknown>[];
     const map = new Map<string, string>();
     engineers.forEach(e => {
-      if (e.customerCode && e.customer && !map.has(e.customerCode)) {
-        map.set(e.customerCode, e.customer);
+      // Engineer型(code)とSheetsEngineer型(customerCode)の両方に対応
+      const code = (e.customerCode as string) || (e.code as string) || "";
+      const name = (e.customer as string) || "";
+      if (code && name && !map.has(code)) {
+        map.set(code, name);
       }
     });
     return Array.from(map.entries())
