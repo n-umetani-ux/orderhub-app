@@ -49,6 +49,17 @@ export function Sidebar({ screen, onNavigate, gapCount }: SidebarProps) {
             )}
           </button>
         ))}
+        {/* Drive folder link */}
+        <a
+          href="https://drive.google.com/drive/folders/1jIhIKa9b-Kzv3niWIsMRw51GS4IVjPFo"
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-sm text-left transition-all text-slate-400 hover:bg-white/5 hover:text-slate-200"
+        >
+          <span className="text-base">📁</span>
+          <span className="flex-1">注文書PDF フォルダ</span>
+          <span className="text-[10px] text-slate-500">↗</span>
+        </a>
       </nav>
 
       {/* User */}

@@ -210,6 +210,8 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
   const [multiSearchVal, setMultiSearchVal] = useState("");
   const [multiSuggestions, setMultiSuggestions] = useState<SheetsEngineer[]>([]);
   const [multiLowestManNo, setMultiLowestManNo] = useState("");
+  const [multiCustomerCode, setMultiCustomerCode] = useState("");
+  const [multiCustomerName, setMultiCustomerName] = useState("");
   const [dept, setDept]             = useState<string>(
     prefill ? (DEPTS.find(d => d.loc === prefill.loc)?.code ?? "1010") : "1010"
   );
@@ -221,16 +223,31 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
 
   const selectedEng = selected as Engineer | null;
 
+  /** キャッシュから顧客コード＋顧客名のユニークリストを生成 */
+  const customerList = useMemo(() => {
+    const cache = loadCache(user?.email ?? "");
+    const engineers = (cache?.engineers ?? []) as SheetsEngineer[];
+    const map = new Map<string, string>();
+    engineers.forEach(e => {
+      if (e.customerCode && e.customer && !map.has(e.customerCode)) {
+        map.set(e.customerCode, e.customer);
+      }
+    });
+    return Array.from(map.entries())
+      .map(([code, name]) => ({ code, name }))
+      .sort((a, b) => a.code.localeCompare(b.code));
+  }, [user?.email]);
+
   const fileName = useMemo(() =>
     buildFileName(
       startDate, dept,
-      selectedEng?.code ?? "",
-      selectedEng?.customer ?? "",
+      targetType === "multi(チーム)" ? multiCustomerCode : (selectedEng?.code ?? ""),
+      targetType === "multi(チーム)" ? multiCustomerName : (selectedEng?.customer ?? ""),
       targetType,
       selectedEng?.manNo ?? null,
       multiLowestManNo
     ),
-    [startDate, dept, selectedEng, targetType, multiLowestManNo]
+    [startDate, dept, selectedEng, targetType, multiLowestManNo, multiCustomerCode, multiCustomerName]
   );
 
   /** PDF選択時にフォームを自動入力する */
@@ -410,6 +427,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
     if (!activeEntry?.file) { setUploadError("PDFファイルを選択してください"); return; }
     if (!startDate || !endDate) { setUploadError("契約期間を入力してください"); return; }
     if (targetType === "multi(チーム)" && multiMembers.length === 0) { setUploadError("チームメンバーを1名以上追加してください"); return; }
+    if (targetType === "multi(チーム)" && !multiCustomerCode) { setUploadError("顧客コードを選択してください"); return; }
     setUploading(true);
     setUploadError(null);
     try {
@@ -441,8 +459,8 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
               fileName,
               driveLink:     data.link ?? "",
               dept,
-              customerCode:  member.customerCode,
-              customerName:  member.customer,
+              customerCode:  multiCustomerCode,
+              customerName:  multiCustomerName,
               targetType,
               uploadedBy:    user?.email ?? "",
             }),
@@ -507,6 +525,14 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
           <p className="text-sm text-slate-700 mb-6">ファイル名: <code className="bg-slate-100 px-2 py-0.5 rounded text-xs">{fileName}</code></p>
           <a href={uploadResult} target="_blank" rel="noreferrer" className="px-5 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors">
             Drive で確認
+          </a>
+          <a
+            href={`https://drive.google.com/drive/folders/${process.env.NEXT_PUBLIC_DRIVE_FOLDER_ID || "1jIhIKa9b-Kzv3niWIsMRw51GS4IVjPFo"}`}
+            target="_blank"
+            rel="noreferrer"
+            className="ml-3 px-5 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-colors"
+          >
+            📁 保存フォルダを開く
           </a>
           <button onClick={onBack} className="ml-3 px-5 py-2.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-600 hover:bg-slate-50 transition-colors">
             一覧へ戻る
@@ -622,7 +648,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                   {(["社員番号", "BP番号", "multi(チーム)"] as TargetType[]).map(t => (
                     <button
                       key={t}
-                      onClick={() => { setTargetType(t); setSelected(null); setSearchVal(""); setMultiMembers([]); setMultiLowestManNo(""); }}
+                      onClick={() => { setTargetType(t); setSelected(null); setSearchVal(""); setMultiMembers([]); setMultiLowestManNo(""); setMultiCustomerCode(""); setMultiCustomerName(""); }}
                       className={`px-4 py-1.5 rounded-lg border text-xs font-semibold transition-all
                         ${targetType === t ? "border-blue-400 bg-blue-50 text-blue-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
                     >
@@ -761,6 +787,33 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                           </div>
                         ))}
                       </div>
+                    )}
+                  </div>
+                  {/* 顧客コード選択（multi専用） */}
+                  <div className="mt-3 p-3 rounded-lg bg-amber-50 border border-amber-200">
+                    <label className="text-xs font-semibold text-amber-800 mb-2 block">
+                      📋 顧客コード（multi注文書の顧客を選択）
+                    </label>
+                    <select
+                      value={multiCustomerCode}
+                      onChange={e => {
+                        const code = e.target.value;
+                        setMultiCustomerCode(code);
+                        const found = customerList.find(c => c.code === code);
+                        setMultiCustomerName(found?.name ?? "");
+                      }}
+                      className="w-full px-3 py-2 rounded-lg border border-amber-300 text-sm"
+                      style={{ color: "#111827", backgroundColor: "#fff" }}
+                    >
+                      <option value="">-- 顧客を選択してください --</option>
+                      {customerList.map(c => (
+                        <option key={c.code} value={c.code}>{c.code} {c.name}</option>
+                      ))}
+                    </select>
+                    {multiCustomerCode && (
+                      <p className="mt-1.5 text-xs text-amber-700">
+                        選択中: <b>{multiCustomerCode}</b> {multiCustomerName}
+                      </p>
                     )}
                   </div>
                 </div>
