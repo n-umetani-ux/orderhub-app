@@ -255,7 +255,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
       <div className="flex justify-between items-start mb-5">
         <div>
           <h1 className="text-xl font-bold tracking-tight" style={{ color: "#0f172a" }}>注文書カバレッジ管理</h1>
-          <p className="text-sm mt-1" style={{ color: "#4b5563" }}>稼働一覧 × 注文書台帳 — カレンダービュー</p>
+          <p className="text-sm mt-1" style={{ color: "#4b5563" }}>稼働データ × 注文書台帳 — カレンダービュー</p>
         </div>
         <div className="flex items-center gap-2">
           {cachedAt && (
