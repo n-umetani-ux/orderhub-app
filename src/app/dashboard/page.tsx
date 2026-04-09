@@ -180,13 +180,21 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
   }, [filtered, ordersByManNo]);
 
   // 各エンジニアの月別カバレッジ計算
+  // "covered" = 注文書あり, "gap" = 稼働中だが注文書なし, "na" = その月は稼働対象外
   const coverageMap = useMemo(() => {
-    const map: Record<number, Record<string, "covered" | "gap">> = {};
+    const map: Record<number, Record<string, "covered" | "gap" | "na">> = {};
     filtered.forEach(e => {
       const engOrders = ordersByManNo[String(e.manNo)] ?? [];
-      const months: Record<string, "covered" | "gap"> = {};
+      const activeMonths = e.activeMonths ?? [];
+      const months: Record<string, "covered" | "gap" | "na"> = {};
       calendarMonths.forEach(ym => {
-        months[ym] = engOrders.some(o => orderCoversMonth(o, ym)) ? "covered" : "gap";
+        // この月に稼働一覧に存在するか
+        const isActiveThisMonth = activeMonths.length === 0 || activeMonths.includes(ym);
+        if (!isActiveThisMonth) {
+          months[ym] = "na"; // 稼働対象外
+        } else {
+          months[ym] = engOrders.some(o => orderCoversMonth(o, ym)) ? "covered" : "gap";
+        }
       });
       map[e.manNo] = months;
     });
@@ -204,14 +212,19 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
 
     active.forEach(e => {
       const engOrders = ordersByManNo[String(e.manNo)] ?? [];
+      const activeMonths = e.activeMonths ?? [];
+      // 当月に稼働対象かチェック
+      const isActiveThisMonth = activeMonths.length === 0 || (currentMonth && activeMonths.includes(currentMonth));
+      if (!isActiveThisMonth) return; // 当月稼働対象外はカウントしない
+
       const coveredThisMonth = currentMonth && engOrders.some(o => orderCoversMonth(o, currentMonth));
       if (!coveredThisMonth) {
         gapCount++;
       } else {
-        // 次月にギャップがあるか？
         const nextMonth = calendarMonths[1];
-        const coveredNextMonth = nextMonth && engOrders.some(o => orderCoversMonth(o, nextMonth));
-        if (!coveredNextMonth) {
+        const isActiveNextMonth = activeMonths.length === 0 || (nextMonth && activeMonths.includes(nextMonth));
+        const coveredNextMonth = nextMonth && isActiveNextMonth && engOrders.some(o => orderCoversMonth(o, nextMonth));
+        if (!coveredNextMonth && isActiveNextMonth) {
           expiringCount++;
         } else {
           normalCount++;
@@ -428,12 +441,12 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
                             key={ym}
                             className={`text-center py-2 ${i === 0 ? "border-l-2 border-l-blue-300" : ""}`}
                             style={{
-                              backgroundColor: isEnding ? "#f8fafc" :
+                              backgroundColor: isEnding || status === "na" ? "#f8fafc" :
                                 status === "covered" ? "#f0fdf4" :
                                 status === "gap" ? "#fef2f2" : "#f8fafc",
                             }}
                           >
-                            {isEnding ? (
+                            {isEnding || status === "na" ? (
                               <span style={{ color: "#cbd5e1", fontSize: "11px" }}>—</span>
                             ) : status === "covered" ? (
                               <span style={{ color: "#16a34a", fontSize: "13px", fontWeight: 700 }}>○</span>

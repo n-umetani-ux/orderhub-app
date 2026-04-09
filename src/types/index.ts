@@ -16,6 +16,7 @@ export interface Engineer {
   // 稼働一覧から取得
   kubun?: string;
   activity?: number; // D列: 稼働値
+  activeMonths?: string[]; // 稼働中の月 ["2026-04", "2026-05"]
 }
 
 export interface SheetsEngineer {

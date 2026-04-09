@@ -23,7 +23,7 @@ const DEFAULT_SHEET_ID = process.env.GOOGLE_SHEETS_ID ?? "";
  * 現在参照すべき稼働一覧スプレッドシートIDの一覧を返す
  * 当月 + 翌月の最大2つ（存在するもののみ）
  */
-export function getActiveSheetIds(): { id: string; label: string }[] {
+export function getActiveSheetIds(): { id: string; label: string; yearMonth: string }[] {
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth() + 1; // 1-based
@@ -33,16 +33,16 @@ export function getActiveSheetIds(): { id: string; label: string }[] {
   const nextYear = month === 12 ? year + 1 : year;
   const nextKey = `${nextYear}-${String(nextMonth).padStart(2, "0")}`;
 
-  const result: { id: string; label: string }[] = [];
+  const result: { id: string; label: string; yearMonth: string }[] = [];
 
   if (MONTHLY_SHEET_IDS[currentKey]) {
-    result.push({ id: MONTHLY_SHEET_IDS[currentKey], label: `${month}月` });
+    result.push({ id: MONTHLY_SHEET_IDS[currentKey], label: `${month}月`, yearMonth: currentKey });
   } else if (DEFAULT_SHEET_ID) {
-    result.push({ id: DEFAULT_SHEET_ID, label: `${month}月` });
+    result.push({ id: DEFAULT_SHEET_ID, label: `${month}月`, yearMonth: currentKey });
   }
 
   if (MONTHLY_SHEET_IDS[nextKey]) {
-    result.push({ id: MONTHLY_SHEET_IDS[nextKey], label: `${nextMonth}月` });
+    result.push({ id: MONTHLY_SHEET_IDS[nextKey], label: `${nextMonth}月`, yearMonth: nextKey });
   }
 
   return result;

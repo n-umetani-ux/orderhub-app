@@ -81,8 +81,11 @@ export async function GET(req: NextRequest) {
     const activeSheets = getActiveSheetIds();
     console.log("[sheets API] 参照スプレッドシート:", activeSheets.map(s => s.label));
 
+    // 各エンジニアがどの月のシートに稼働中として存在するか追跡
+    // manNo → Set<"2026-04", "2026-05">
+    const manNoActiveMonths = new Map<string, Set<string>>();
     const raw = [];
-    for (const { id: spreadsheetId, label } of activeSheets) {
+    for (const { id: spreadsheetId, label, yearMonth } of activeSheets) {
       try {
         const meta = await sheets.spreadsheets.get({ spreadsheetId });
         const sheetNames = meta.data.sheets?.map(s => s.properties?.title ?? "") ?? [];
@@ -98,12 +101,16 @@ export async function GET(req: NextRequest) {
           const sanitized = rows.map(row =>
             row.map((cell, idx) => (SENSITIVE_COLS.has(idx) ? "" : cell))
           );
-          raw.push(...parseRows(sanitized, loc));
+          const parsed = parseRows(sanitized, loc);
+          for (const eng of parsed) {
+            if (!manNoActiveMonths.has(eng.manNo)) manNoActiveMonths.set(eng.manNo, new Set());
+            manNoActiveMonths.get(eng.manNo)!.add(yearMonth);
+          }
+          raw.push(...parsed);
         }
         console.log(`[sheets API] ${label}シート読み込み完了`);
       } catch (err) {
         console.warn(`[sheets API] ${label}シート読み込み失敗（未作成の可能性）:`, err);
-        // 翌月シートが未作成の場合はスキップ
       }
     }
 
@@ -151,10 +158,15 @@ export async function GET(req: NextRequest) {
       // アーカイブ申請シートが未作成の場合は無視
     }
 
-    // gap-detector でステータスを確定
-    const engineers = deduped.map(e =>
-      toEngineer(e, ordersByManNo.get(e.manNo) ?? [], archivedManNos.has(e.manNo))
-    );
+    // gap-detector でステータスを確定 + activeMonths を付与
+    const engineers = deduped.map(e => {
+      const eng = toEngineer(e, ordersByManNo.get(e.manNo) ?? [], archivedManNos.has(e.manNo));
+      const months = manNoActiveMonths.get(e.manNo);
+      return {
+        ...eng,
+        activeMonths: months ? Array.from(months).sort() : [],
+      };
+    });
 
     return NextResponse.json({ engineers });
   } catch (e: unknown) {
