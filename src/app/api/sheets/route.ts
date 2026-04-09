@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
 import { toEngineer, OrderRecord } from "@/lib/gap-detector";
+import { getCurrentMonthSheetId, getOrderLedgerSheetId } from "@/lib/monthly-sheets";
 
-const SPREADSHEET_ID = process.env.GOOGLE_SHEETS_ID!;
+const SPREADSHEET_ID = getCurrentMonthSheetId();
+const LEDGER_SHEET_ID = getOrderLedgerSheetId();
 
 const SECTION_MARKERS = ["待機一覧", "正社員エンジニア一覧", "個人事業主エンジニア一覧", "パートナーエンジニア一覧", "ENGチーム", "ENG_BP"];
 const STANDBY_SECTION = "待機一覧";
@@ -106,7 +108,7 @@ export async function GET(req: NextRequest) {
     let ordersByManNo = new Map<string, OrderRecord[]>();
     try {
       const ordersRes = await sheets.spreadsheets.values.get({
-        spreadsheetId: SPREADSHEET_ID,
+        spreadsheetId: LEDGER_SHEET_ID,
         range: "注文書台帳!A:D",
       });
       const ordersRows = (ordersRes.data.values ?? []) as string[][];
@@ -126,7 +128,7 @@ export async function GET(req: NextRequest) {
     const archivedManNos = new Set<string>();
     try {
       const archiveRes = await sheets.spreadsheets.values.get({
-        spreadsheetId: SPREADSHEET_ID,
+        spreadsheetId: LEDGER_SHEET_ID,
         range: "アーカイブ申請!A:E",
       });
       const archiveRows = (archiveRes.data.values ?? []) as string[][];
