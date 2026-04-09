@@ -28,7 +28,8 @@ interface PdfEntry {
 
 /** 命名規約: YYMMDD_部署コード_顧客コード顧客略称_社員番号.pdf
  * 例: 260401_1010_C0105SCSK Minoriソリューションズ_170156.pdf
- * multi例: 260401_1010_C0105SCSK_multi-1.pdf
+ * multi例: 260401_1010_C0058CPリンクス_multi.pdf (1枚目)
+ *          260401_1010_C0058CPリンクス_multi-1.pdf (2枚目以降)
  */
 function buildFileName(
   startDate: string,
@@ -37,15 +38,18 @@ function buildFileName(
   customerName: string,
   targetType: TargetType,
   manNo: number | null,
-  multiLowestManNo?: string
+  multiSeq?: number
 ): string {
   const d   = startDate ? startDate.replace(/-/g, "").slice(2) : "YYMMDD";
   const customer = customerCode && customerName
     ? `${customerCode}${customerName}`
     : customerCode || customerName || "（顧客未入力）";
-  const tid = targetType === "multi(チーム)"
-    ? `${multiLowestManNo || "（番号未入力）"}multi`
-    : manNo != null ? String(manNo) : "（番号未入力）";
+  let tid: string;
+  if (targetType === "multi(チーム)") {
+    tid = multiSeq != null && multiSeq > 0 ? `multi-${multiSeq}` : "multi";
+  } else {
+    tid = manNo != null ? String(manNo) : "（番号未入力）";
+  }
   return `${d}_${dept}_${customer}_${tid}.pdf`;
 }
 
@@ -209,7 +213,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
   const [multiMembers, setMultiMembers] = useState<SheetsEngineer[]>([]);
   const [multiSearchVal, setMultiSearchVal] = useState("");
   const [multiSuggestions, setMultiSuggestions] = useState<SheetsEngineer[]>([]);
-  const [multiLowestManNo, setMultiLowestManNo] = useState("");
+  const [multiSeq, setMultiSeq] = useState(0);
   const [multiCustomerCode, setMultiCustomerCode] = useState("");
   const [multiCustomerName, setMultiCustomerName] = useState("");
   const [dept, setDept]             = useState<string>(
@@ -248,9 +252,9 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
       targetType === "multi(チーム)" ? multiCustomerName : (selectedEng?.customer ?? ""),
       targetType,
       selectedEng?.manNo ?? null,
-      multiLowestManNo
+      multiSeq
     ),
-    [startDate, dept, selectedEng, targetType, multiLowestManNo, multiCustomerCode, multiCustomerName]
+    [startDate, dept, selectedEng, targetType, multiSeq, multiCustomerCode, multiCustomerName]
   );
 
   /** PDF選択時にフォームを自動入力する */
@@ -405,9 +409,6 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
     setMultiMembers(next);
     setMultiSearchVal("");
     setMultiSuggestions([]);
-    // 最若番号を自動算出
-    const lowest = next.reduce((min, m) => m.manNo < min ? m.manNo : min, next[0].manNo);
-    setMultiLowestManNo(lowest);
     // 部署を最初のメンバーから設定
     if (next.length === 1) {
       const matchDept = DEPTS.find(d => d.loc === e.loc);
@@ -418,12 +419,6 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
   const removeMultiMember = (manNo: string) => {
     const next = multiMembers.filter(m => m.manNo !== manNo);
     setMultiMembers(next);
-    if (next.length > 0) {
-      const lowest = next.reduce((min, m) => m.manNo < min ? m.manNo : min, next[0].manNo);
-      setMultiLowestManNo(lowest);
-    } else {
-      setMultiLowestManNo("");
-    }
   };
 
   const handleSubmit = async () => {
@@ -661,14 +656,13 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                         if (t === "multi(チーム)" && activeEntry && activeEntry.nameMatches.length > 0) {
                           const members = activeEntry.nameMatches;
                           setMultiMembers(members);
-                          const lowest = members.reduce((min, m) => m.manNo < min ? m.manNo : min, members[0].manNo);
-                          setMultiLowestManNo(lowest);
+                          setMultiSeq(0);
                           // 最初のメンバーから部署設定
                           const matchDept = DEPTS.find(d => d.loc === members[0].loc);
                           if (matchDept) setDept(matchDept.code);
                         } else {
                           setMultiMembers([]);
-                          setMultiLowestManNo("");
+                          setMultiSeq(0);
                         }
                       }}
                       className={`px-4 py-1.5 rounded-lg border text-xs font-semibold transition-all
@@ -781,7 +775,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                           </button>
                         </div>
                       ))}
-                      <p className="text-[10px] text-slate-500">{multiMembers.length}名選択 / 最若番号: {multiLowestManNo}</p>
+                      <p className="text-[10px] text-slate-500">{multiMembers.length}名選択</p>
                     </div>
                   )}
                   {/* メンバー検索 */}
@@ -837,6 +831,25 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                         選択中: <b>{multiCustomerCode}</b> {multiCustomerName}
                       </p>
                     )}
+                  </div>
+                  {/* 連番（multi専用） */}
+                  <div className="mt-3">
+                    <label className="text-xs font-semibold text-gray-800 mb-2 block">
+                      連番（同一顧客の2枚目以降に設定）
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={multiSeq}
+                        onChange={e => setMultiSeq(Number(e.target.value))}
+                        className="px-3 py-2 rounded-lg border border-slate-300 text-sm"
+                        style={{ color: "#111827", backgroundColor: "#fff" }}
+                      >
+                        <option value={0}>なし（1枚目: _multi.pdf）</option>
+                        {[1,2,3,4,5,6,7,8,9,10].map(n => (
+                          <option key={n} value={n}>multi-{n}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 </div>
               )}
