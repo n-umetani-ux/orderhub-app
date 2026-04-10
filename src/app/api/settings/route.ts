@@ -66,6 +66,20 @@ export async function GET(req: NextRequest) {
       if (row[0]) settings[row[0]] = row[1] ?? "";
     }
 
+    // adminEmails が未設定の場合、デフォルト管理者を自動登録
+    if (!settings["adminEmails"]) {
+      const defaultAdmin = "n-umetani@beat-tech.co.jp";
+      try {
+        await sheets.spreadsheets.values.append({
+          spreadsheetId: SPREADSHEET_ID,
+          range: `${SETTINGS_SHEET}!A:B`,
+          valueInputOption: "RAW",
+          requestBody: { values: [["adminEmails", defaultAdmin]] },
+        });
+        settings["adminEmails"] = defaultAdmin;
+      } catch { /* ignore */ }
+    }
+
     const adminEmails = parseAdminEmails(settings);
     const isAdmin = adminEmails.includes(userEmail);
 
