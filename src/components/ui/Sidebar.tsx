@@ -22,7 +22,9 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
   const [showSettings, setShowSettings] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [driveFolderId, setDriveFolderId] = useState(DEFAULT_DRIVE_FOLDER_ID);
+  const [adminEmails, setAdminEmails] = useState("");
   const [settingsInput, setSettingsInput] = useState("");
+  const [adminInput, setAdminInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
@@ -41,6 +43,10 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
         setDriveFolderId(d.settings.driveFolderId);
         setSettingsInput(d.settings.driveFolderId);
       }
+      if (d.settings?.adminEmails) {
+        setAdminEmails(d.settings.adminEmails);
+        setAdminInput(d.settings.adminEmails);
+      }
     } catch { /* ignore */ }
   }, [accessToken, userEmail]);
 
@@ -49,28 +55,38 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
   // 管理者ステータスを親に通知
   useEffect(() => { onAdminChange?.(isAdmin); }, [isAdmin, onAdminChange]);
 
-  const handleSaveFolder = async () => {
-    if (!accessToken || !settingsInput.trim()) return;
+  const saveSetting = async (key: string, value: string) => {
+    const r = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-google-access-token": accessToken!, "x-user-email": userEmail },
+      body: JSON.stringify({ key, value }),
+    });
+    return r.json();
+  };
+
+  const handleSaveSettings = async () => {
+    if (!accessToken) return;
     setSaving(true);
     setSaveMsg(null);
     try {
-      // DriveフォルダURLからIDを抽出
+      // DriveフォルダIDを保存
       let folderId = settingsInput.trim();
       const urlMatch = folderId.match(/\/folders\/([a-zA-Z0-9_-]+)/);
       if (urlMatch) folderId = urlMatch[1];
 
-      const r = await fetch("/api/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-google-access-token": accessToken, "x-user-email": userEmail },
-        body: JSON.stringify({ key: "driveFolderId", value: folderId }),
-      });
-      const d = await r.json();
-      if (d.ok) {
-        setDriveFolderId(folderId);
+      const results = await Promise.all([
+        folderId ? saveSetting("driveFolderId", folderId) : Promise.resolve({ ok: true }),
+        adminInput.trim() ? saveSetting("adminEmails", adminInput.trim()) : Promise.resolve({ ok: true }),
+      ]);
+
+      const failed = results.find(r => !r.ok);
+      if (failed) {
+        setSaveMsg(failed.error ?? "保存に失敗しました");
+      } else {
+        if (folderId) setDriveFolderId(folderId);
+        if (adminInput.trim()) setAdminEmails(adminInput.trim());
         setSaveMsg("保存しました");
         setTimeout(() => setSaveMsg(null), 2000);
-      } else {
-        setSaveMsg(d.error ?? "保存に失敗しました");
       }
     } catch {
       setSaveMsg("保存に失敗しました");
@@ -130,7 +146,7 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
         {/* Settings (管理者のみ表示) */}
         {isAdmin && (
           <button
-            onClick={() => { setShowSettings(!showSettings); setSettingsInput(driveFolderId); }}
+            onClick={() => { setShowSettings(!showSettings); setSettingsInput(driveFolderId); setAdminInput(adminEmails); setSaveMsg(null); }}
             className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-sm text-left transition-all text-slate-400 hover:bg-white/5 hover:text-slate-200"
           >
             <span className="text-base">⚙</span>
@@ -145,8 +161,26 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
           <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md mx-4" onClick={ev => ev.stopPropagation()}>
             <h2 className="text-lg font-bold mb-4" style={{ color: "#111827" }}>管理者設定</h2>
 
+            {/* Admin emails setting */}
+            <div className="mb-5">
+              <label className="block text-sm font-medium mb-1" style={{ color: "#374151" }}>
+                管理者メールアドレス
+              </label>
+              <p className="text-xs mb-2" style={{ color: "#6b7280" }}>
+                カンマ区切りで複数指定できます
+              </p>
+              <textarea
+                value={adminInput}
+                onChange={e => setAdminInput(e.target.value)}
+                placeholder="user1@beat-tech.co.jp,user2@beat-tech.co.jp"
+                rows={3}
+                className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm resize-none"
+                style={{ color: "#111827", backgroundColor: "#fff" }}
+              />
+            </div>
+
             {/* Drive folder setting */}
-            <div className="mb-4">
+            <div className="mb-5">
               <label className="block text-sm font-medium mb-1" style={{ color: "#374151" }}>
                 注文書PDF 保存先フォルダ
               </label>
@@ -164,7 +198,7 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
 
             <div className="flex items-center gap-3">
               <button
-                onClick={handleSaveFolder}
+                onClick={handleSaveSettings}
                 disabled={saving}
                 className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
               >
