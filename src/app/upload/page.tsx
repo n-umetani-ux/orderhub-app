@@ -26,6 +26,11 @@ interface PdfEntry {
   autoSelected: SheetsEngineer | null;
 }
 
+/** 命名規約: YYMMDD_部署コード_顧客コード顧客略称_社員番号.pdf
+ * 例: 260401_1010_C0105SCSK Minoriソリューションズ_170156.pdf
+ * multi例: 260401_1010_C0058CPリンクス_multi.pdf (1枚目)
+ *          260401_1010_C0058CPリンクス_multi-1.pdf (2枚目以降)
+ */
 function buildFileName(
   startDate: string,
   dept: string,
@@ -33,15 +38,19 @@ function buildFileName(
   customerName: string,
   targetType: TargetType,
   manNo: number | null,
-  multiLowestManNo?: string
+  multiSeq?: number
 ): string {
-  const d   = startDate.replace(/-/g, "").slice(2) || "______";
-  const cc  = customerCode || "____";
-  const cn  = customerName || "____";
-  const tid = targetType === "multi(チーム)"
-    ? `${multiLowestManNo ?? "______"}multi`
-    : String(manNo ?? "______");
-  return `${d}_${dept}_${cc}${cn}_${tid}.pdf`;
+  const d   = startDate ? startDate.replace(/-/g, "").slice(2) : "YYMMDD";
+  const customer = customerCode && customerName
+    ? `${customerCode}${customerName}`
+    : customerCode || customerName || "（顧客未入力）";
+  let tid: string;
+  if (targetType === "multi(チーム)") {
+    tid = multiSeq != null && multiSeq > 0 ? `multi-${multiSeq}` : "multi";
+  } else {
+    tid = manNo != null ? String(manNo) : "（番号未入力）";
+  }
+  return `${d}_${dept}_${customer}_${tid}.pdf`;
 }
 
 /** PDF からテキストを抽出し、日付・氏名を解析する純粋関数 */
@@ -204,7 +213,9 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
   const [multiMembers, setMultiMembers] = useState<SheetsEngineer[]>([]);
   const [multiSearchVal, setMultiSearchVal] = useState("");
   const [multiSuggestions, setMultiSuggestions] = useState<SheetsEngineer[]>([]);
-  const [multiLowestManNo, setMultiLowestManNo] = useState("");
+  const [multiSeq, setMultiSeq] = useState(0);
+  const [multiCustomerCode, setMultiCustomerCode] = useState("");
+  const [multiCustomerName, setMultiCustomerName] = useState("");
   const [dept, setDept]             = useState<string>(
     prefill ? (DEPTS.find(d => d.loc === prefill.loc)?.code ?? "1010") : "1010"
   );
@@ -216,16 +227,34 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
 
   const selectedEng = selected as Engineer | null;
 
+  /** キャッシュから顧客コード＋顧客名のユニークリストを生成 */
+  const customerList = useMemo(() => {
+    const cache = loadCache(user?.email ?? "");
+    const engineers = (cache?.engineers ?? []) as Record<string, unknown>[];
+    const map = new Map<string, string>();
+    engineers.forEach(e => {
+      // Engineer型(code)とSheetsEngineer型(customerCode)の両方に対応
+      const code = (e.customerCode as string) || (e.code as string) || "";
+      const name = (e.customer as string) || "";
+      if (code && name && !map.has(code)) {
+        map.set(code, name);
+      }
+    });
+    return Array.from(map.entries())
+      .map(([code, name]) => ({ code, name }))
+      .sort((a, b) => a.code.localeCompare(b.code));
+  }, [user?.email]);
+
   const fileName = useMemo(() =>
     buildFileName(
       startDate, dept,
-      selectedEng?.code ?? "",
-      selectedEng?.customer ?? "",
+      targetType === "multi(チーム)" ? multiCustomerCode : (selectedEng?.code ?? ""),
+      targetType === "multi(チーム)" ? multiCustomerName : (selectedEng?.customer ?? ""),
       targetType,
       selectedEng?.manNo ?? null,
-      multiLowestManNo
+      multiSeq
     ),
-    [startDate, dept, selectedEng, targetType, multiLowestManNo]
+    [startDate, dept, selectedEng, targetType, multiSeq, multiCustomerCode, multiCustomerName]
   );
 
   /** PDF選択時にフォームを自動入力する */
@@ -380,9 +409,6 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
     setMultiMembers(next);
     setMultiSearchVal("");
     setMultiSuggestions([]);
-    // 最若番号を自動算出
-    const lowest = next.reduce((min, m) => m.manNo < min ? m.manNo : min, next[0].manNo);
-    setMultiLowestManNo(lowest);
     // 部署を最初のメンバーから設定
     if (next.length === 1) {
       const matchDept = DEPTS.find(d => d.loc === e.loc);
@@ -393,18 +419,13 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
   const removeMultiMember = (manNo: string) => {
     const next = multiMembers.filter(m => m.manNo !== manNo);
     setMultiMembers(next);
-    if (next.length > 0) {
-      const lowest = next.reduce((min, m) => m.manNo < min ? m.manNo : min, next[0].manNo);
-      setMultiLowestManNo(lowest);
-    } else {
-      setMultiLowestManNo("");
-    }
   };
 
   const handleSubmit = async () => {
     if (!activeEntry?.file) { setUploadError("PDFファイルを選択してください"); return; }
     if (!startDate || !endDate) { setUploadError("契約期間を入力してください"); return; }
     if (targetType === "multi(チーム)" && multiMembers.length === 0) { setUploadError("チームメンバーを1名以上追加してください"); return; }
+    if (targetType === "multi(チーム)" && !multiCustomerCode) { setUploadError("顧客コードを選択してください"); return; }
     setUploading(true);
     setUploadError(null);
     try {
@@ -436,8 +457,8 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
               fileName,
               driveLink:     data.link ?? "",
               dept,
-              customerCode:  member.customerCode,
-              customerName:  member.customer,
+              customerCode:  multiCustomerCode,
+              customerName:  multiCustomerName,
               targetType,
               uploadedBy:    user?.email ?? "",
             }),
@@ -486,7 +507,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
         >
           ← 戻る
         </button>
-        <h1 className="text-xl font-bold text-slate-900 tracking-tight">注文書の登録・メタデータ付与</h1>
+        <h1 className="text-xl font-bold tracking-tight" style={{ color: "#0f172a" }}>注文書の登録・メタデータ付与</h1>
         {pdfEntries.length > 0 && (
           <span className="ml-auto text-xs text-slate-500">
             {pdfEntries.length}件のPDF
@@ -503,6 +524,14 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
           <a href={uploadResult} target="_blank" rel="noreferrer" className="px-5 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors">
             Drive で確認
           </a>
+          <a
+            href={`https://drive.google.com/drive/folders/${process.env.NEXT_PUBLIC_DRIVE_FOLDER_ID || "1jIhIKa9b-Kzv3niWIsMRw51GS4IVjPFo"}`}
+            target="_blank"
+            rel="noreferrer"
+            className="ml-3 px-5 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-colors"
+          >
+            📁 保存フォルダを開く
+          </a>
           <button onClick={onBack} className="ml-3 px-5 py-2.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-600 hover:bg-slate-50 transition-colors">
             一覧へ戻る
           </button>
@@ -511,7 +540,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
         <div className="grid grid-cols-2 gap-7">
           {/* Left: PDF upload + file list */}
           <div>
-            <h2 className="text-sm font-semibold text-slate-700 mb-3">1. 対象ファイルの登録</h2>
+            <h2 className="text-sm font-bold text-gray-900 mb-3">1. 対象ファイルの登録</h2>
             <div
               onDragOver={e => { e.preventDefault(); setDragging(true); }}
               onDragLeave={() => setDragging(false)}
@@ -557,8 +586,8 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                       ) : "📄"}
                     </span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-slate-800 truncate">{entry.file.name}</p>
-                      <p className="text-[10px] text-slate-500">
+                      <p className="text-xs font-semibold text-gray-900 truncate">{entry.file.name}</p>
+                      <p className="text-[10px] text-gray-500">
                         {entry.extracting
                           ? "テキスト抽出中…"
                           : `${entry.rawText.length}字抽出`
@@ -608,16 +637,34 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
 
           {/* Right: Form */}
           <div>
-            <h2 className="text-sm font-semibold text-slate-700 mb-3">2. 契約詳細・送信</h2>
+            <h2 className="text-sm font-bold text-gray-900 mb-3">2. 契約詳細・送信</h2>
             <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
               {/* Target type */}
               <div>
-                <label className="text-xs font-semibold text-slate-700 mb-2 block">対象区分</label>
+                <label className="text-xs font-semibold text-gray-800 mb-2 block">対象区分</label>
                 <div className="flex gap-1.5">
                   {(["社員番号", "BP番号", "multi(チーム)"] as TargetType[]).map(t => (
                     <button
                       key={t}
-                      onClick={() => { setTargetType(t); setSelected(null); setSearchVal(""); setMultiMembers([]); setMultiLowestManNo(""); }}
+                      onClick={() => {
+                        setTargetType(t);
+                        setSelected(null);
+                        setSearchVal("");
+                        setMultiCustomerCode("");
+                        setMultiCustomerName("");
+                        // multi切替時にPDFから検出された候補を自動追加
+                        if (t === "multi(チーム)" && activeEntry && activeEntry.nameMatches.length > 0) {
+                          const members = activeEntry.nameMatches;
+                          setMultiMembers(members);
+                          setMultiSeq(0);
+                          // 最初のメンバーから部署設定
+                          const matchDept = DEPTS.find(d => d.loc === members[0].loc);
+                          if (matchDept) setDept(matchDept.code);
+                        } else {
+                          setMultiMembers([]);
+                          setMultiSeq(0);
+                        }
+                      }}
                       className={`px-4 py-1.5 rounded-lg border text-xs font-semibold transition-all
                         ${targetType === t ? "border-blue-400 bg-blue-50 text-blue-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
                     >
@@ -630,7 +677,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
               {/* Target search */}
               {targetType !== "multi(チーム)" && (
                 <div className="relative">
-                  <label className="text-xs font-semibold text-slate-700 mb-2 block">
+                  <label className="text-xs font-semibold text-gray-800 mb-2 block">
                     対象者（manNo. または氏名で検索）
                     {cachedCount > 0
                       ? <span className="ml-2 font-normal text-emerald-600">{cachedCount}件利用可能</span>
@@ -644,17 +691,19 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                     onBlur={() => setTimeout(() => setSuggestions([]), 150)}
                     placeholder="例: 170156 または 井上"
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
+                    style={{ color: "#111827", backgroundColor: "#ffffff" }}
                   />
                   {suggestions.length > 0 && (
-                    <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-48 overflow-auto mt-1">
+                    <div className="absolute top-full left-0 right-0 border border-slate-200 rounded-lg shadow-xl z-50 max-h-48 overflow-auto mt-1" style={{ backgroundColor: "#ffffff" }}>
                       {suggestions.map(s => (
                         <div
                           key={s.manNo}
                           onMouseDown={() => selectEngineer(s)}
-                          className="px-4 py-2 text-sm cursor-pointer hover:bg-slate-50 flex justify-between border-b border-slate-50"
+                          className="px-4 py-2 text-sm cursor-pointer hover:bg-blue-50 flex justify-between border-b border-slate-100"
+                          style={{ color: "#111827" }}
                         >
-                          <span><b>{s.manNo}</b> {s.name}</span>
-                          <span className="text-slate-600 text-xs">{s.customer} / {s.loc}</span>
+                          <span style={{ color: "#111827", fontWeight: 600 }}><b>{s.manNo}</b> {s.name}</span>
+                          <span style={{ color: "#4b5563", fontSize: "12px" }}>{s.customer} / {s.loc}</span>
                         </div>
                       ))}
                     </div>
@@ -678,23 +727,23 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
 
               {/* Contract period */}
               <div>
-                <label className="text-xs font-semibold text-slate-700 mb-2 block">注文書に記載の契約期間</label>
+                <label className="text-xs font-semibold text-gray-800 mb-2 block">注文書に記載の契約期間</label>
                 <div className="flex items-center gap-2">
-                  <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="flex-1 px-2.5 py-2 rounded-lg border border-slate-300 text-sm" />
+                  <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="flex-1 px-2.5 py-2 rounded-lg border border-slate-300 text-sm" style={{ color: "#111827", backgroundColor: "#fff" }} />
                   <span className="text-slate-600">〜</span>
-                  <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="flex-1 px-2.5 py-2 rounded-lg border border-slate-300 text-sm" />
+                  <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="flex-1 px-2.5 py-2 rounded-lg border border-slate-300 text-sm" style={{ color: "#111827", backgroundColor: "#fff" }} />
                 </div>
               </div>
 
               {/* Issue date + dept */}
               <div className="grid grid-cols-2 gap-2.5">
                 <div>
-                  <label className="text-xs font-semibold text-slate-700 mb-2 block">発注日（参考）</label>
-                  <input type="date" value={issueDate} onChange={e => setIssueDate(e.target.value)} className="w-full px-2.5 py-2 rounded-lg border border-slate-300 text-sm" />
+                  <label className="text-xs font-semibold text-gray-800 mb-2 block">発注日（参考）</label>
+                  <input type="date" value={issueDate} onChange={e => setIssueDate(e.target.value)} className="w-full px-2.5 py-2 rounded-lg border border-slate-300 text-sm" style={{ color: "#111827", backgroundColor: "#fff" }} />
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-slate-700 mb-2 block">部署</label>
-                  <select value={dept} onChange={e => setDept(e.target.value)} className="w-full px-2.5 py-2 rounded-lg border border-slate-300 text-sm bg-white">
+                  <label className="text-xs font-semibold text-gray-800 mb-2 block">部署</label>
+                  <select value={dept} onChange={e => setDept(e.target.value)} className="w-full px-2.5 py-2 rounded-lg border border-slate-300 text-sm" style={{ color: "#111827", backgroundColor: "#fff" }}>
                     {DEPTS.map(d => <option key={d.code} value={d.code}>{d.code}: {d.name}</option>)}
                   </select>
                 </div>
@@ -703,7 +752,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
               {/* multi: メンバー選択 */}
               {targetType === "multi(チーム)" && (
                 <div>
-                  <label className="text-xs font-semibold text-slate-700 mb-2 block">
+                  <label className="text-xs font-semibold text-gray-800 mb-2 block">
                     チームメンバー（注文書の対象者を追加）
                     {cachedCount > 0
                       ? <span className="ml-2 font-normal text-emerald-600">{cachedCount}件利用可能</span>
@@ -726,7 +775,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                           </button>
                         </div>
                       ))}
-                      <p className="text-[10px] text-slate-500">{multiMembers.length}名選択 / 最若番号: {multiLowestManNo}</p>
+                      <p className="text-[10px] text-slate-500">{multiMembers.length}名選択</p>
                     </div>
                   )}
                   {/* メンバー検索 */}
@@ -738,6 +787,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                       onBlur={() => setTimeout(() => setMultiSuggestions([]), 150)}
                       placeholder="manNo. または氏名でメンバーを追加"
                       className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
+                      style={{ color: "#111827", backgroundColor: "#fff" }}
                     />
                     {multiSuggestions.length > 0 && (
                       <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-48 overflow-auto mt-1">
@@ -745,22 +795,69 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                           <div
                             key={s.manNo}
                             onMouseDown={() => addMultiMember(s)}
-                            className="px-4 py-2 text-sm cursor-pointer hover:bg-slate-50 flex justify-between border-b border-slate-50"
+                            className="px-4 py-2 text-sm cursor-pointer hover:bg-blue-50 flex justify-between border-b border-slate-100"
+                            style={{ color: "#111827" }}
                           >
-                            <span><b>{s.manNo}</b> {s.name}</span>
-                            <span className="text-slate-600 text-xs">{s.customer} / {s.loc}</span>
+                            <span style={{ color: "#111827", fontWeight: 600 }}><b>{s.manNo}</b> {s.name}</span>
+                            <span style={{ color: "#4b5563", fontSize: "12px" }}>{s.customer} / {s.loc}</span>
                           </div>
                         ))}
                       </div>
                     )}
+                  </div>
+                  {/* 顧客コード選択（multi専用） */}
+                  <div className="mt-3 p-3 rounded-lg bg-amber-50 border border-amber-200">
+                    <label className="text-xs font-semibold text-amber-800 mb-2 block">
+                      📋 顧客コード（multi注文書の顧客を選択）
+                    </label>
+                    <select
+                      value={multiCustomerCode}
+                      onChange={e => {
+                        const code = e.target.value;
+                        setMultiCustomerCode(code);
+                        const found = customerList.find(c => c.code === code);
+                        setMultiCustomerName(found?.name ?? "");
+                      }}
+                      className="w-full px-3 py-2 rounded-lg border border-amber-300 text-sm"
+                      style={{ color: "#111827", backgroundColor: "#fff" }}
+                    >
+                      <option value="">-- 顧客を選択してください --</option>
+                      {customerList.map(c => (
+                        <option key={c.code} value={c.code}>{c.code} {c.name}</option>
+                      ))}
+                    </select>
+                    {multiCustomerCode && (
+                      <p className="mt-1.5 text-xs text-amber-700">
+                        選択中: <b>{multiCustomerCode}</b> {multiCustomerName}
+                      </p>
+                    )}
+                  </div>
+                  {/* 連番（multi専用） */}
+                  <div className="mt-3">
+                    <label className="text-xs font-semibold text-gray-800 mb-2 block">
+                      連番（同一顧客の2枚目以降に設定）
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={multiSeq}
+                        onChange={e => setMultiSeq(Number(e.target.value))}
+                        className="px-3 py-2 rounded-lg border border-slate-300 text-sm"
+                        style={{ color: "#111827", backgroundColor: "#fff" }}
+                      >
+                        <option value={0}>なし（1枚目: _multi.pdf）</option>
+                        {[1,2,3,4,5,6,7,8,9,10].map(n => (
+                          <option key={n} value={n}>multi-{n}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 </div>
               )}
 
               {/* File name preview */}
               <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
-                <p className="text-[10px] text-slate-700 mb-1">生成ファイル名プレビュー</p>
-                <p className="text-xs font-bold text-slate-800 font-mono break-all">{fileName}</p>
+                <p className="text-[10px] text-gray-600 mb-1">生成ファイル名プレビュー</p>
+                <p className="text-xs font-bold text-gray-900 font-mono break-all">{fileName}</p>
               </div>
 
               {uploadError && (

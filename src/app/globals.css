@@ -2,8 +2,8 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
-  color-scheme: light;
+  --foreground: #111827;
+  color-scheme: light !important;
 }
 
 @theme inline {
@@ -13,8 +13,48 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* ダークモードを完全無効化 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #ffffff !important;
+    --foreground: #111827 !important;
+    color-scheme: light !important;
+  }
+  html, body {
+    background-color: #ffffff !important;
+    color: #111827 !important;
+  }
+}
+
+html {
+  color-scheme: light !important;
+}
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background-color: #ffffff !important;
+  color: #111827 !important;
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* 全テキスト要素の色を強制 */
+h1, h2, h3, h4, h5, h6, p, span, div, label, a, li, td, th, b, strong, code, pre {
+  color: inherit;
+}
+
+/* フォーム要素: ブラウザのdark themeに絶対に負けない */
+input, select, textarea {
+  color: #111827 !important;
+  background-color: #ffffff !important;
+  color-scheme: light !important;
+  -webkit-text-fill-color: #111827 !important;
+}
+input::placeholder, textarea::placeholder {
+  color: #9ca3af !important;
+  -webkit-text-fill-color: #9ca3af !important;
+}
+option {
+  color: #111827 !important;
+  background-color: #ffffff !important;
+}
+button {
+  color-scheme: light !important;
 }

@@ -19,6 +19,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "file と fileName は必須です" }, { status: 400 });
     }
 
+    if (!DRIVE_FOLDER_ID) {
+      return NextResponse.json({ error: "GOOGLE_DRIVE_FOLDER_ID が未設定です" }, { status: 500 });
+    }
+
+    // ユーザーのOAuthトークンで認証（Drive容量はユーザーのもの）
     const oauth2 = new google.auth.OAuth2();
     oauth2.setCredentials({ access_token: accessToken });
     const drive = google.drive({ version: "v3", auth: oauth2 });
@@ -42,7 +47,6 @@ export async function POST(req: NextRequest) {
   } catch (e: unknown) {
     console.error("[drive API]", e);
     const detail = e instanceof Error ? e.message : String(e);
-    // Google API エラーの場合、レスポンスの詳細を含める
     const gaxiosErr = e as { response?: { status?: number; data?: unknown } };
     const apiStatus = gaxiosErr?.response?.status;
     const apiData = gaxiosErr?.response?.data;

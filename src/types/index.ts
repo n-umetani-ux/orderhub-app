@@ -16,6 +16,7 @@ export interface Engineer {
   // 稼働一覧から取得
   kubun?: string;
   activity?: number; // D列: 稼働値
+  activeMonths?: string[]; // 稼働中の月 ["2026-04", "2026-05"]
 }
 
 export interface SheetsEngineer {
@@ -46,17 +47,18 @@ export const DEPTS: ReadonlyArray<{ code: string; name: string; loc: string }> =
 ];
 
 export const SALES_STAFF: Record<string, string> = {
-  "梅谷":  "umetani@example.com",
-  "工藤":  "kudo@example.com",
-  "小山":  "koyama@example.com",
-  "木村":  "kimura@example.com",
-  "平川":  "hirakawa@example.com",
-  "山田":  "yamada@example.com",
-  "衣笠":  "kinugasa@example.com",
-  "山口":  "yamaguchi@example.com",
-  "高山":  "takayama@example.com",
-  "杉本":  "sugimoto@example.com",
-  "田邉":  "tanabe@example.com",
-  "西川":  "nishikawa@example.com",
-  "尾上":  "onoe@example.com",
+  "梅谷":  "n-umetani@beat-tech.co.jp",
+  "工藤":  "a-kudo@beat-tech.co.jp",
+  "小山":  "j-koyama@beat-tech.co.jp",
+  "木村":  "k-kimura@beat-tech.co.jp",
+  "平川":  "u-hirakawa@beat-tech.co.jp",
+  "山田":  "t-yamada@beat-tech.co.jp",
+  "衣笠":  "a-kinugasa@beat-tech.co.jp",
+  "山口":  "t-yamaguchi@beat-tech.co.jp",
+  "高山":  "m-takayama@beat-tech.co.jp",
+  "杉本":  "h-sugimoto@beat-tech.co.jp",
+  "田邉":  "k-tanabe@beat-tech.co.jp",
+  "西川":  "r-nishikawa@beat-tech.co.jp",
+  "尾上":  "h-onoue@beat-tech.co.jp",
+  "緒方":  "a-ogata@beat-tech.co.jp",
 };
