@@ -507,7 +507,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
         >
           ← 戻る
         </button>
-        <h1 className="text-xl font-bold tracking-tight" style={{ color: "#0f172a" }}>注文書の登録・メタデータ付与</h1>
+        <h1 className="text-xl font-bold tracking-tight" style={{ color: "#0f172a" }}>注文書の登録</h1>
         {pdfEntries.length > 0 && (
           <span className="ml-auto text-xs text-slate-500">
             {pdfEntries.length}件のPDF
@@ -547,7 +547,8 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
               onDrop={handleDrop}
               onClick={() => fileInputRef.current?.click()}
               className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all
-                ${dragging ? "border-blue-400 bg-blue-50" : "border-slate-300 bg-slate-50 hover:border-slate-400"}`}
+                ${dragging ? "border-blue-400" : "border-slate-300 hover:border-slate-400"}`}
+              style={{ backgroundColor: dragging ? "#eff6ff" : "#ffffff" }}
             >
               <input
                 ref={fileInputRef}
@@ -558,7 +559,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                 onChange={e => e.target.files && e.target.files.length > 0 && handleFiles(e.target.files)}
               />
               <div className="text-3xl mb-2 opacity-40">📄</div>
-              <p className="text-sm text-slate-700 mb-3">
+              <p className="text-sm mb-3" style={{ color: "#1e293b" }}>
                 {pdfEntries.length > 0 ? "さらにPDFを追加" : "ここに注文書PDFをドロップ"}
               </p>
               <span className="px-5 py-2 rounded-xl text-xs font-semibold" style={{ backgroundColor: "#2563eb", color: "#ffffff" }}>
