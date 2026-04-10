@@ -30,12 +30,12 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
 
   const userEmail = user?.email ?? "";
 
-  // 設定を読み込み（管理者判定含む）
+  // 設定を読み込み（管理者判定含む）— サービスアカウント使用のためaccessToken不要
   const loadSettings = useCallback(async () => {
-    if (!accessToken) return;
+    if (!userEmail) return;
     try {
       const r = await fetch("/api/settings", {
-        headers: { "x-google-access-token": accessToken, "x-user-email": userEmail },
+        headers: { "x-user-email": userEmail },
       });
       const d = await r.json();
       setIsAdmin(d.isAdmin === true);
@@ -48,7 +48,7 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
         setAdminInput(d.settings.adminEmails);
       }
     } catch { /* ignore */ }
-  }, [accessToken, userEmail]);
+  }, [userEmail]);
 
   useEffect(() => { loadSettings(); }, [loadSettings]);
 
@@ -58,14 +58,15 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
   const saveSetting = async (key: string, value: string) => {
     const r = await fetch("/api/settings", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-google-access-token": accessToken!, "x-user-email": userEmail },
+      headers: { "Content-Type": "application/json", "x-user-email": userEmail },
       body: JSON.stringify({ key, value }),
     });
-    return r.json();
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error ?? "保存に失敗しました");
+    return data;
   };
 
   const handleSaveSettings = async () => {
-    if (!accessToken) return;
     setSaving(true);
     setSaveMsg(null);
     try {
@@ -74,22 +75,20 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
       const urlMatch = folderId.match(/\/folders\/([a-zA-Z0-9_-]+)/);
       if (urlMatch) folderId = urlMatch[1];
 
-      const results = await Promise.all([
-        folderId ? saveSetting("driveFolderId", folderId) : Promise.resolve({ ok: true }),
-        adminInput.trim() ? saveSetting("adminEmails", adminInput.trim()) : Promise.resolve({ ok: true }),
-      ]);
-
-      const failed = results.find(r => !r.ok);
-      if (failed) {
-        setSaveMsg(failed.error ?? "保存に失敗しました");
-      } else {
-        if (folderId) setDriveFolderId(folderId);
-        if (adminInput.trim()) setAdminEmails(adminInput.trim());
-        setSaveMsg("保存しました");
-        setTimeout(() => setSaveMsg(null), 2000);
+      // 逐次実行（同時書き込みの競合を回避）
+      if (adminInput.trim()) {
+        await saveSetting("adminEmails", adminInput.trim());
+        setAdminEmails(adminInput.trim());
       }
-    } catch {
-      setSaveMsg("保存に失敗しました");
+      if (folderId) {
+        await saveSetting("driveFolderId", folderId);
+        setDriveFolderId(folderId);
+      }
+
+      setSaveMsg("保存しました");
+      setTimeout(() => setSaveMsg(null), 2000);
+    } catch (err) {
+      setSaveMsg(err instanceof Error ? err.message : "保存に失敗しました");
     } finally {
       setSaving(false);
     }
