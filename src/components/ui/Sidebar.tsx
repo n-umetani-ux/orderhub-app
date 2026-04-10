@@ -9,35 +9,45 @@ interface SidebarProps {
   screen: Screen;
   onNavigate: (s: Screen) => void;
   gapCount: number;
+  onAdminChange?: (isAdmin: boolean) => void;
 }
 
 const DEFAULT_DRIVE_FOLDER_ID = process.env.NEXT_PUBLIC_DRIVE_FOLDER_ID || "1jIhIKa9b-Kzv3niWIsMRw51GS4IVjPFo";
 
-export function Sidebar({ screen, onNavigate, gapCount }: SidebarProps) {
+export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: SidebarProps) {
   const { user, accessToken, signOut } = useAuth();
   const name = user?.displayName?.split(" ")[0] ?? user?.email ?? "";
   const initial = name.charAt(0);
 
   const [showSettings, setShowSettings] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [driveFolderId, setDriveFolderId] = useState(DEFAULT_DRIVE_FOLDER_ID);
   const [settingsInput, setSettingsInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
-  // 設定を読み込み
+  const userEmail = user?.email ?? "";
+
+  // 設定を読み込み（管理者判定含む）
   const loadSettings = useCallback(async () => {
     if (!accessToken) return;
     try {
-      const r = await fetch("/api/settings", { headers: { "x-google-access-token": accessToken } });
+      const r = await fetch("/api/settings", {
+        headers: { "x-google-access-token": accessToken, "x-user-email": userEmail },
+      });
       const d = await r.json();
+      setIsAdmin(d.isAdmin === true);
       if (d.settings?.driveFolderId) {
         setDriveFolderId(d.settings.driveFolderId);
         setSettingsInput(d.settings.driveFolderId);
       }
     } catch { /* ignore */ }
-  }, [accessToken]);
+  }, [accessToken, userEmail]);
 
   useEffect(() => { loadSettings(); }, [loadSettings]);
+
+  // 管理者ステータスを親に通知
+  useEffect(() => { onAdminChange?.(isAdmin); }, [isAdmin, onAdminChange]);
 
   const handleSaveFolder = async () => {
     if (!accessToken || !settingsInput.trim()) return;
@@ -51,7 +61,7 @@ export function Sidebar({ screen, onNavigate, gapCount }: SidebarProps) {
 
       const r = await fetch("/api/settings", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-google-access-token": accessToken },
+        headers: { "Content-Type": "application/json", "x-google-access-token": accessToken, "x-user-email": userEmail },
         body: JSON.stringify({ key: "driveFolderId", value: folderId }),
       });
       const d = await r.json();
@@ -117,14 +127,16 @@ export function Sidebar({ screen, onNavigate, gapCount }: SidebarProps) {
           <span className="flex-1">注文書PDF フォルダ</span>
           <span className="text-[10px]" style={{ color: "#94a3b8", WebkitTextFillColor: "#94a3b8" }}>↗</span>
         </a>
-        {/* Settings */}
-        <button
-          onClick={() => { setShowSettings(!showSettings); setSettingsInput(driveFolderId); }}
-          className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-sm text-left transition-all text-slate-400 hover:bg-white/5 hover:text-slate-200"
-        >
-          <span className="text-base">⚙</span>
-          <span className="flex-1" style={{ color: "#94a3b8", WebkitTextFillColor: "#94a3b8" }}>管理者設定</span>
-        </button>
+        {/* Settings (管理者のみ表示) */}
+        {isAdmin && (
+          <button
+            onClick={() => { setShowSettings(!showSettings); setSettingsInput(driveFolderId); }}
+            className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-sm text-left transition-all text-slate-400 hover:bg-white/5 hover:text-slate-200"
+          >
+            <span className="text-base">⚙</span>
+            <span className="flex-1" style={{ color: "#94a3b8", WebkitTextFillColor: "#94a3b8" }}>管理者設定</span>
+          </button>
+        )}
       </nav>
 
       {/* Settings modal */}

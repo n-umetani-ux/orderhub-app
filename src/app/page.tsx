@@ -16,6 +16,7 @@ export default function Home() {
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [prefill, setPrefill] = useState<Engineer | null>(null);
   const [gapCount, setGapCount] = useState(0);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
@@ -41,10 +42,10 @@ export default function Home() {
 
   return (
     <div className="flex min-h-screen font-sans bg-slate-50">
-      <Sidebar screen={screen} onNavigate={handleNavigate} gapCount={gapCount} />
+      <Sidebar screen={screen} onNavigate={handleNavigate} gapCount={gapCount} onAdminChange={setIsAdmin} />
       <main className="flex-1 px-9 py-7 max-w-[1100px] overflow-auto">
         {screen === "dashboard" && (
-          <DashboardPage onSwitch={handleSwitch} onGapCountChange={setGapCount} />
+          <DashboardPage onSwitch={handleSwitch} onGapCountChange={setGapCount} isAdmin={isAdmin} />
         )}
         {screen === "upload" && (
           <UploadPage prefill={prefill} onBack={() => handleNavigate("dashboard")} />

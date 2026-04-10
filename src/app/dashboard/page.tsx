@@ -54,9 +54,10 @@ function orderCoversMonth(order: OrderRecord, ym: string): boolean {
 interface DashboardPageProps {
   onSwitch: (e: Engineer) => void;
   onGapCountChange?: (n: number) => void;
+  isAdmin?: boolean;
 }
 
-export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardPageProps) {
+export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = false }: DashboardPageProps) {
   const { user, accessToken, reauth } = useAuth();
   const [engineers, setEngineers] = useState<Engineer[]>([]);
   const [orders, setOrders] = useState<OrderRecord[]>([]);
@@ -540,16 +541,16 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
                         return (
                           <td
                             key={ym}
-                            className={`text-center py-2 relative cursor-pointer ${i === 0 ? "border-l-2 border-l-blue-300" : ""}`}
+                            className={`text-center py-2 relative ${isAdmin ? "cursor-pointer" : ""} ${i === 0 ? "border-l-2 border-l-blue-300" : ""}`}
                             style={{
                               backgroundColor: isEnding || status === "na" ? "#f8fafc" :
                                 status === "covered" ? "#f0fdf4" :
                                 status === "gap" ? "#fef2f2" : "#f8fafc",
                             }}
-                            onContextMenu={ev => {
+                            onContextMenu={isAdmin ? (ev => {
                               ev.preventDefault();
                               setOverrideMenu({ manNo: e.manNo, ym, x: ev.clientX, y: ev.clientY });
-                            }}
+                            }) : undefined}
                           >
                             {isEnding || status === "na" ? (
                               <span style={{ color: "#cbd5e1", fontSize: "11px" }}>—</span>
@@ -589,9 +590,11 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
             )}
           </p>
 
-          <p className="mt-1 text-[10px]" style={{ color: "#9ca3af" }}>
-            右クリックでセルの手動オーバーライドが可能です
-          </p>
+          {isAdmin && (
+            <p className="mt-1 text-[10px]" style={{ color: "#9ca3af" }}>
+              右クリックでセルの手動オーバーライドが可能です
+            </p>
+          )}
         </>
       )}
 
