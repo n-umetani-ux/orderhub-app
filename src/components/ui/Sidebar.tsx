@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/lib/auth-context";
 
 type Screen = "dashboard" | "upload";
@@ -10,10 +11,65 @@ interface SidebarProps {
   gapCount: number;
 }
 
+const DEFAULT_DRIVE_FOLDER_ID = process.env.NEXT_PUBLIC_DRIVE_FOLDER_ID || "1jIhIKa9b-Kzv3niWIsMRw51GS4IVjPFo";
+
 export function Sidebar({ screen, onNavigate, gapCount }: SidebarProps) {
-  const { user, signOut } = useAuth();
+  const { user, accessToken, signOut } = useAuth();
   const name = user?.displayName?.split(" ")[0] ?? user?.email ?? "";
   const initial = name.charAt(0);
+
+  const [showSettings, setShowSettings] = useState(false);
+  const [driveFolderId, setDriveFolderId] = useState(DEFAULT_DRIVE_FOLDER_ID);
+  const [settingsInput, setSettingsInput] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+
+  // 設定を読み込み
+  const loadSettings = useCallback(async () => {
+    if (!accessToken) return;
+    try {
+      const r = await fetch("/api/settings", { headers: { "x-google-access-token": accessToken } });
+      const d = await r.json();
+      if (d.settings?.driveFolderId) {
+        setDriveFolderId(d.settings.driveFolderId);
+        setSettingsInput(d.settings.driveFolderId);
+      }
+    } catch { /* ignore */ }
+  }, [accessToken]);
+
+  useEffect(() => { loadSettings(); }, [loadSettings]);
+
+  const handleSaveFolder = async () => {
+    if (!accessToken || !settingsInput.trim()) return;
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      // DriveフォルダURLからIDを抽出
+      let folderId = settingsInput.trim();
+      const urlMatch = folderId.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+      if (urlMatch) folderId = urlMatch[1];
+
+      const r = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-google-access-token": accessToken },
+        body: JSON.stringify({ key: "driveFolderId", value: folderId }),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        setDriveFolderId(folderId);
+        setSaveMsg("保存しました");
+        setTimeout(() => setSaveMsg(null), 2000);
+      } else {
+        setSaveMsg(d.error ?? "保存に失敗しました");
+      }
+    } catch {
+      setSaveMsg("保存に失敗しました");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const driveUrl = `https://drive.google.com/drive/folders/${driveFolderId}`;
 
   return (
     <aside className="w-52 shrink-0 flex flex-col bg-gradient-to-b from-slate-900 to-slate-800 h-screen sticky top-0">
@@ -51,7 +107,7 @@ export function Sidebar({ screen, onNavigate, gapCount }: SidebarProps) {
         ))}
         {/* Drive folder link */}
         <a
-          href="https://drive.google.com/drive/folders/1jIhIKa9b-Kzv3niWIsMRw51GS4IVjPFo"
+          href={driveUrl}
           target="_blank"
           rel="noreferrer"
           className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-sm text-left transition-all hover:bg-white/5"
@@ -61,7 +117,63 @@ export function Sidebar({ screen, onNavigate, gapCount }: SidebarProps) {
           <span className="flex-1">注文書PDF フォルダ</span>
           <span className="text-[10px]" style={{ color: "#94a3b8", WebkitTextFillColor: "#94a3b8" }}>↗</span>
         </a>
+        {/* Settings */}
+        <button
+          onClick={() => { setShowSettings(!showSettings); setSettingsInput(driveFolderId); }}
+          className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-sm text-left transition-all text-slate-400 hover:bg-white/5 hover:text-slate-200"
+        >
+          <span className="text-base">⚙</span>
+          <span className="flex-1" style={{ color: "#94a3b8", WebkitTextFillColor: "#94a3b8" }}>管理者設定</span>
+        </button>
       </nav>
+
+      {/* Settings modal */}
+      {showSettings && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowSettings(false)}>
+          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md mx-4" onClick={ev => ev.stopPropagation()}>
+            <h2 className="text-lg font-bold mb-4" style={{ color: "#111827" }}>管理者設定</h2>
+
+            {/* Drive folder setting */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-1" style={{ color: "#374151" }}>
+                注文書PDF 保存先フォルダ
+              </label>
+              <p className="text-xs mb-2" style={{ color: "#6b7280" }}>
+                Google DriveのフォルダIDまたはURLを入力してください
+              </p>
+              <input
+                value={settingsInput}
+                onChange={e => setSettingsInput(e.target.value)}
+                placeholder="フォルダID or URL"
+                className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
+                style={{ color: "#111827", backgroundColor: "#fff" }}
+              />
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleSaveFolder}
+                disabled={saving}
+                className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
+              >
+                {saving ? "保存中…" : "保存"}
+              </button>
+              <button
+                onClick={() => setShowSettings(false)}
+                className="px-4 py-2 rounded-lg border border-slate-300 text-sm font-semibold hover:bg-slate-50 transition-colors"
+                style={{ color: "#374151" }}
+              >
+                閉じる
+              </button>
+              {saveMsg && (
+                <span className="text-sm" style={{ color: saveMsg === "保存しました" ? "#059669" : "#dc2626" }}>
+                  {saveMsg}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* User */}
       <div className="px-5 py-4 border-t border-white/10">

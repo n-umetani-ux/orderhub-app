@@ -60,13 +60,17 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
   const { user, accessToken, reauth } = useAuth();
   const [engineers, setEngineers] = useState<Engineer[]>([]);
   const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [loadedMonths, setLoadedMonths] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [cachedAt, setCachedAt] = useState<string | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [overrides, setOverrides] = useState<Record<string, Record<string, "covered" | "gap" | "na">>>({});
   const [locFilter, setLocFilter] = useState("全拠点");
   const [myOnly, setMyOnly] = useState(false);
   const [search, setSearch] = useState("");
+  const [overrideMenu, setOverrideMenu] = useState<{ manNo: number; ym: string; x: number; y: number } | null>(null);
+  const [savingOverride, setSavingOverride] = useState(false);
 
   const currentTantou = useMemo(() => {
     const email = user?.email ?? "";
@@ -78,13 +82,15 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
     setSyncing(true);
     setFetchError(null);
     try {
-      // エンジニア一覧と注文書台帳を並列取得
-      const [sheetsRes, ordersRes] = await Promise.all([
+      // エンジニア一覧と注文書台帳とオーバーライドを並列取得
+      const [sheetsRes, ordersRes, overridesRes] = await Promise.all([
         fetch("/api/sheets", { headers: { "x-google-access-token": accessToken } }),
         fetch("/api/orders", { headers: { "x-google-access-token": accessToken } }),
+        fetch("/api/overrides", { headers: { "x-google-access-token": accessToken } }),
       ]);
       const sheetsData = await sheetsRes.json();
       const ordersData = await ordersRes.json();
+      const overridesData = await overridesRes.json();
 
       if (sheetsRes.status === 401 || sheetsRes.status === 403) {
         setFetchError("アクセストークンが期限切れです。「再認証が必要です」ボタンを押してください。");
@@ -93,7 +99,15 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
       } else {
         setEngineers(sheetsData.engineers ?? []);
         setOrders(ordersData.orders ?? []);
-        saveCache(user?.email ?? "", sheetsData.engineers ?? []);
+        setLoadedMonths(sheetsData.loadedMonths ?? []);
+        // オーバーライドをマップに変換
+        const oMap: Record<string, Record<string, "covered" | "gap" | "na">> = {};
+        for (const o of (overridesData.overrides ?? []) as { manNo: string; yearMonth: string; status: "covered" | "gap" | "na" }[]) {
+          if (!oMap[o.manNo]) oMap[o.manNo] = {};
+          oMap[o.manNo][o.yearMonth] = o.status;
+        }
+        setOverrides(oMap);
+        saveCache(user?.email ?? "", sheetsData.engineers ?? [], sheetsData.loadedMonths ?? []);
         setCachedAt(new Date().toISOString());
       }
     } catch {
@@ -108,13 +122,22 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
     if (cache) {
       setEngineers(cache.engineers as Engineer[]);
       setCachedAt(cache.cachedAt);
+      setLoadedMonths(cache.loadedMonths ?? []);
       setLoading(false);
-      // ordersはキャッシュしないのでAPIから取得
+      // ordersとoverridesはキャッシュしないのでAPIから取得
       if (accessToken) {
-        fetch("/api/orders", { headers: { "x-google-access-token": accessToken } })
-          .then(r => r.json())
-          .then(d => setOrders(d.orders ?? []))
-          .catch(() => {});
+        Promise.all([
+          fetch("/api/orders", { headers: { "x-google-access-token": accessToken } }).then(r => r.json()),
+          fetch("/api/overrides", { headers: { "x-google-access-token": accessToken } }).then(r => r.json()),
+        ]).then(([ordersData, overridesData]) => {
+          setOrders(ordersData.orders ?? []);
+          const oMap: Record<string, Record<string, "covered" | "gap" | "na">> = {};
+          for (const o of (overridesData.overrides ?? []) as { manNo: string; yearMonth: string; status: "covered" | "gap" | "na" }[]) {
+            if (!oMap[o.manNo]) oMap[o.manNo] = {};
+            oMap[o.manNo][o.yearMonth] = o.status;
+          }
+          setOverrides(oMap);
+        }).catch(() => {});
       }
       return;
     }
@@ -186,14 +209,18 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
     filtered.forEach(e => {
       const engOrders = ordersByManNo[String(e.manNo)] ?? [];
       const activeMonths = e.activeMonths ?? [];
+      const engOverrides = overrides[String(e.manNo)] ?? {};
       const months: Record<string, "covered" | "gap" | "na"> = {};
       calendarMonths.forEach(ym => {
+        // 手動オーバーライドがあれば優先
+        if (engOverrides[ym]) {
+          months[ym] = engOverrides[ym];
+          return;
+        }
         const hasCovering = engOrders.some(o => orderCoversMonth(o, ym));
         if (hasCovering) {
-          // 注文書があれば稼働一覧に関係なくカバー済み
           months[ym] = "covered";
         } else {
-          // 注文書がない場合、その月に稼働一覧にいるかで判定
           const isActiveThisMonth = activeMonths.length === 0 || activeMonths.includes(ym);
           months[ym] = isActiveThisMonth ? "gap" : "na";
         }
@@ -201,7 +228,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
       map[e.manNo] = months;
     });
     return map;
-  }, [filtered, ordersByManNo, calendarMonths]);
+  }, [filtered, ordersByManNo, calendarMonths, overrides]);
 
   // サマリー統計
   const counts = useMemo(() => {
@@ -259,6 +286,53 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
       return bGaps - aGaps; // ギャップが多い順
     });
   }, [filtered, calendarMonths, coverageMap]);
+
+  // オーバーライドセルの右クリックメニューを閉じる
+  useEffect(() => {
+    const handleClick = () => setOverrideMenu(null);
+    document.addEventListener("click", handleClick);
+    return () => document.removeEventListener("click", handleClick);
+  }, []);
+
+  const handleOverride = async (status: "covered" | "gap" | "na" | "auto") => {
+    if (!overrideMenu || !accessToken) return;
+    setSavingOverride(true);
+    try {
+      const r = await fetch("/api/overrides", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-google-access-token": accessToken },
+        body: JSON.stringify({
+          manNo: String(overrideMenu.manNo),
+          yearMonth: overrideMenu.ym,
+          status,
+          updatedBy: user?.email ?? "",
+        }),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        if (status === "auto") {
+          // オーバーライド削除
+          setOverrides(prev => {
+            const next = { ...prev };
+            const key = String(overrideMenu.manNo);
+            if (next[key]) {
+              const { [overrideMenu.ym]: _, ...rest } = next[key];
+              next[key] = rest;
+            }
+            return next;
+          });
+        } else {
+          // オーバーライド設定
+          setOverrides(prev => {
+            const key = String(overrideMenu.manNo);
+            return { ...prev, [key]: { ...(prev[key] ?? {}), [overrideMenu.ym]: status } };
+          });
+        }
+      }
+    } catch { /* ignore */ }
+    setSavingOverride(false);
+    setOverrideMenu(null);
+  };
 
   // 月ヘッダーの列幅を動的計算
   const monthColWidth = "56px";
@@ -342,6 +416,17 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
               <span className="w-5 h-5 rounded" style={{ backgroundColor: "#f1f5f9" }} />
               稼働終了
             </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#3b82f6" }} />
+              稼働データ読み込み済み
+              {loadedMonths.length > 0 && (
+                <span style={{ color: "#3b82f6" }}>（{loadedMonths.map(ym => monthLabel(ym)).join("・")}）</span>
+              )}
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#8b5cf6" }} />
+              手動オーバーライド
+            </span>
           </div>
 
           {/* フィルタ */}
@@ -384,15 +469,28 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
                   <th className="text-left px-3 py-2.5 text-xs font-semibold border-b border-slate-200 sticky left-14 z-10" style={{ color: "#374151", backgroundColor: "#f8fafc", width: "140px" }}>
                     氏名
                   </th>
-                  {calendarMonths.map((ym, i) => (
-                    <th
-                      key={ym}
-                      className={`text-center px-1 py-2.5 text-xs font-semibold border-b border-slate-200 ${i === 0 ? "border-l-2 border-l-blue-300" : ""}`}
-                      style={{ color: i === 0 ? "#2563eb" : "#374151", width: monthColWidth }}
-                    >
-                      {monthLabel(ym)}
-                    </th>
-                  ))}
+                  {calendarMonths.map((ym, i) => {
+                    const hasData = loadedMonths.includes(ym);
+                    return (
+                      <th
+                        key={ym}
+                        className={`text-center px-1 py-2.5 text-xs font-semibold border-b ${i === 0 ? "border-l-2 border-l-blue-300" : ""}`}
+                        style={{
+                          color: i === 0 ? "#2563eb" : "#374151",
+                          width: monthColWidth,
+                          borderBottomWidth: hasData ? "3px" : undefined,
+                          borderBottomColor: hasData ? "#3b82f6" : undefined,
+                        }}
+                      >
+                        <div className="flex flex-col items-center gap-0.5">
+                          {monthLabel(ym)}
+                          {hasData && (
+                            <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#3b82f6" }} />
+                          )}
+                        </div>
+                      </th>
+                    );
+                  })}
                   <th className="text-center px-2 py-2.5 text-xs font-semibold border-b border-slate-200" style={{ color: "#374151", width: "80px" }}>
                     操作
                   </th>
@@ -438,14 +536,19 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
                       {/* 月別セル */}
                       {calendarMonths.map((ym, i) => {
                         const status = coverage[ym];
+                        const isOverridden = !!overrides[String(e.manNo)]?.[ym];
                         return (
                           <td
                             key={ym}
-                            className={`text-center py-2 ${i === 0 ? "border-l-2 border-l-blue-300" : ""}`}
+                            className={`text-center py-2 relative cursor-pointer ${i === 0 ? "border-l-2 border-l-blue-300" : ""}`}
                             style={{
                               backgroundColor: isEnding || status === "na" ? "#f8fafc" :
                                 status === "covered" ? "#f0fdf4" :
                                 status === "gap" ? "#fef2f2" : "#f8fafc",
+                            }}
+                            onContextMenu={ev => {
+                              ev.preventDefault();
+                              setOverrideMenu({ manNo: e.manNo, ym, x: ev.clientX, y: ev.clientY });
                             }}
                           >
                             {isEnding || status === "na" ? (
@@ -454,6 +557,9 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
                               <span style={{ color: "#16a34a", fontSize: "13px", fontWeight: 700 }}>○</span>
                             ) : (
                               <span style={{ color: "#dc2626", fontSize: "11px", fontWeight: 700 }}>未</span>
+                            )}
+                            {isOverridden && (
+                              <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#8b5cf6" }} title="手動オーバーライド" />
                             )}
                           </td>
                         );
@@ -482,7 +588,40 @@ export default function DashboardPage({ onSwitch, onGapCountChange }: DashboardP
               <span className="ml-2" style={{ color: "#9ca3af" }}>（アーカイブ候補: {counts.archived}件）</span>
             )}
           </p>
+
+          <p className="mt-1 text-[10px]" style={{ color: "#9ca3af" }}>
+            右クリックでセルの手動オーバーライドが可能です
+          </p>
         </>
+      )}
+
+      {/* オーバーライド右クリックメニュー */}
+      {overrideMenu && (
+        <div
+          className="fixed z-50 bg-white rounded-lg shadow-xl border border-slate-200 py-1 min-w-[140px]"
+          style={{ left: overrideMenu.x, top: overrideMenu.y }}
+          onClick={ev => ev.stopPropagation()}
+        >
+          <div className="px-3 py-1.5 text-[10px] font-semibold border-b border-slate-100" style={{ color: "#6b7280" }}>
+            手動オーバーライド
+          </div>
+          {([
+            { status: "covered" as const, label: "○ カバー済み", color: "#16a34a" },
+            { status: "gap" as const, label: "未 ギャップ", color: "#dc2626" },
+            { status: "na" as const, label: "— 対象外", color: "#9ca3af" },
+            { status: "auto" as const, label: "自動（解除）", color: "#6b7280" },
+          ]).map(opt => (
+            <button
+              key={opt.status}
+              onClick={() => handleOverride(opt.status)}
+              disabled={savingOverride}
+              className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 transition-colors disabled:opacity-50"
+              style={{ color: opt.color }}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
       )}
     </div>
   );

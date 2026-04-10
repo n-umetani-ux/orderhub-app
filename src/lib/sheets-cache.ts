@@ -1,4 +1,4 @@
-const CACHE_VERSION = "v2";
+const CACHE_VERSION = "v3";
 
 function cacheKey(email: string): string {
   return `orderhub_engineers_${CACHE_VERSION}_${email}`;
@@ -7,6 +7,7 @@ function cacheKey(email: string): string {
 interface CacheData {
   engineers: unknown[];
   cachedAt: string;
+  loadedMonths?: string[];
 }
 
 export function loadCache(email: string): CacheData | null {
@@ -19,8 +20,8 @@ export function loadCache(email: string): CacheData | null {
   }
 }
 
-export function saveCache(email: string, engineers: unknown[]): void {
-  const data: CacheData = { engineers, cachedAt: new Date().toISOString() };
+export function saveCache(email: string, engineers: unknown[], loadedMonths?: string[]): void {
+  const data: CacheData = { engineers, cachedAt: new Date().toISOString(), loadedMonths };
   localStorage.setItem(cacheKey(email), JSON.stringify(data));
 }
 

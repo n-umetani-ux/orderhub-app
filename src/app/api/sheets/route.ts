@@ -80,6 +80,7 @@ export async function GET(req: NextRequest) {
     // 当月＋翌月の稼働一覧スプレッドシートを両方読む
     const activeSheets = getActiveSheetIds();
     console.log("[sheets API] 参照スプレッドシート:", activeSheets.map(s => s.label));
+    const loadedMonths: string[] = []; // 読み込み成功した月を記録
 
     // 各エンジニアがどの月のシートに稼働中として存在するか追跡
     // manNo → Set<"2026-04", "2026-05">
@@ -108,6 +109,7 @@ export async function GET(req: NextRequest) {
           }
           raw.push(...parsed);
         }
+        loadedMonths.push(yearMonth);
         console.log(`[sheets API] ${label}シート読み込み完了`);
       } catch (err) {
         console.warn(`[sheets API] ${label}シート読み込み失敗（未作成の可能性）:`, err);
@@ -168,7 +170,7 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    return NextResponse.json({ engineers });
+    return NextResponse.json({ engineers, loadedMonths });
   } catch (e: unknown) {
     console.error("[sheets API]", e);
     return NextResponse.json({ error: "稼働一覧の取得に失敗しました" }, { status: 500 });
