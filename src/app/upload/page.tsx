@@ -561,7 +561,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
               <p className="text-sm text-slate-700 mb-3">
                 {pdfEntries.length > 0 ? "さらにPDFを追加" : "ここに注文書PDFをドロップ"}
               </p>
-              <span className="px-5 py-2 rounded-xl bg-slate-800 text-white text-xs font-semibold">
+              <span className="px-5 py-2 rounded-xl text-xs font-semibold" style={{ backgroundColor: "#2563eb", color: "#ffffff" }}>
                 ファイルを選択（複数可）
               </span>
             </div>
