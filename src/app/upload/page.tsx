@@ -4,6 +4,7 @@ import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { Engineer, SheetsEngineer, DEPTS } from "@/types";
 import { useAuth } from "@/lib/auth-context";
 import { loadCache } from "@/lib/sheets-cache";
+import { validateOrder, ValidationWarning, OrderRecord } from "@/lib/order-validator";
 
 interface UploadPageProps {
   prefill: Engineer | null;
@@ -223,7 +224,19 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
   const [uploading, setUploading]   = useState(false);
   const [uploadResult, setUploadResult] = useState<string | null>(null);
   const [uploadError, setUploadError]   = useState<string | null>(null);
+  const [existingOrders, setExistingOrders] = useState<OrderRecord[]>([]);
+  const [preCheckWarnings, setPreCheckWarnings] = useState<ValidationWarning[]>([]);
+  const [showWarningConfirm, setShowWarningConfirm] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 既存注文書を取得（チェック用）
+  useEffect(() => {
+    if (!accessToken) return;
+    fetch("/api/orders", { headers: { "x-google-access-token": accessToken } })
+      .then(r => r.json())
+      .then(d => setExistingOrders(d.orders ?? []))
+      .catch(() => {});
+  }, [accessToken]);
 
   const selectedEng = selected as Engineer | null;
 
@@ -421,11 +434,48 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
     setMultiMembers(next);
   };
 
-  const handleSubmit = async () => {
+  /** バリデーション実行 → 警告があれば確認ダイアログ表示 */
+  const handleSubmit = () => {
     if (!activeEntry?.file) { setUploadError("PDFファイルを選択してください"); return; }
     if (!startDate || !endDate) { setUploadError("契約期間を入力してください"); return; }
     if (targetType === "multi(チーム)" && multiMembers.length === 0) { setUploadError("チームメンバーを1名以上追加してください"); return; }
     if (targetType === "multi(チーム)" && !multiCustomerCode) { setUploadError("顧客コードを選択してください"); return; }
+    setUploadError(null);
+
+    const pdfNames = activeEntry.nameMatches?.map(n => n.name) ?? [];
+    let warnings: ValidationWarning[];
+
+    if (targetType === "multi(チーム)") {
+      warnings = [];
+      for (const member of multiMembers) {
+        const w = validateOrder({
+          manNo: member.manNo, name: member.name, startDate, endDate, existingOrders,
+          inputCustomerCode: multiCustomerCode, pdfExtractedNames: pdfNames, selectedName: member.name,
+        });
+        w.forEach(ww => { ww.message = `[${member.name}] ${ww.message}`; });
+        warnings.push(...w);
+      }
+    } else {
+      warnings = validateOrder({
+        manNo: String(selectedEng?.manNo ?? ""), name: selectedEng?.name ?? "", startDate, endDate, existingOrders,
+        engineerCustomerCode: selectedEng?.code, inputCustomerCode: selectedEng?.code,
+        pdfExtractedNames: pdfNames, selectedName: selectedEng?.name,
+      });
+    }
+
+    setPreCheckWarnings(warnings);
+
+    if (warnings.length > 0) {
+      setShowWarningConfirm(true);
+      return;
+    }
+
+    doUpload();
+  };
+
+  const doUpload = async () => {
+    if (!activeEntry?.file) return;
+    setShowWarningConfirm(false);
     setUploading(true);
     setUploadError(null);
     try {
@@ -873,6 +923,63 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                 {uploading ? "アップロード中…" : "✓ 内容を確定し、期間ステータスを更新する"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* チェック結果の確認ダイアログ */}
+      {showWarningConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowWarningConfirm(false)}>
+          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-lg mx-4" onClick={ev => ev.stopPropagation()}>
+            <h2 className="text-lg font-bold mb-3" style={{ color: "#111827" }}>登録前チェック結果</h2>
+
+            <div className="space-y-2 mb-5 max-h-64 overflow-y-auto">
+              {preCheckWarnings.map((w, i) => (
+                <div
+                  key={i}
+                  className="flex items-start gap-2 px-3 py-2 rounded-lg text-sm"
+                  style={{
+                    backgroundColor: w.level === "error" ? "#fef2f2" : "#fffbeb",
+                    border: `1px solid ${w.level === "error" ? "#fecaca" : "#fde68a"}`,
+                    color: w.level === "error" ? "#991b1b" : "#92400e",
+                  }}
+                >
+                  <span className="shrink-0 mt-0.5">{w.level === "error" ? "🚫" : "⚠️"}</span>
+                  <span>{w.message}</span>
+                </div>
+              ))}
+            </div>
+
+            {preCheckWarnings.some(w => w.level === "error") ? (
+              <div>
+                <p className="text-sm mb-3" style={{ color: "#dc2626" }}>
+                  エラーがあるため登録できません。内容を修正してください。
+                </p>
+                <button
+                  onClick={() => setShowWarningConfirm(false)}
+                  className="px-5 py-2.5 rounded-lg border border-slate-300 text-sm font-semibold hover:bg-slate-50 transition-colors"
+                  style={{ color: "#374151" }}
+                >
+                  戻って修正する
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={doUpload}
+                  className="px-5 py-2.5 rounded-lg bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition-colors"
+                >
+                  確認済み — このまま登録する
+                </button>
+                <button
+                  onClick={() => setShowWarningConfirm(false)}
+                  className="px-5 py-2.5 rounded-lg border border-slate-300 text-sm font-semibold hover:bg-slate-50 transition-colors"
+                  style={{ color: "#374151" }}
+                >
+                  戻って修正する
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
