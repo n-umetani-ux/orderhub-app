@@ -61,6 +61,7 @@ export async function POST(req: NextRequest) {
         body: stream,
       },
       fields: "id, webViewLink",
+      supportsAllDrives: true,
     });
 
     return NextResponse.json({ link: res.data.webViewLink ?? res.data.id });
