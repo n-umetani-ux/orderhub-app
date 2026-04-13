@@ -5,6 +5,18 @@ import { Readable } from "stream";
 const DEFAULT_DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID ?? "";
 const SPREADSHEET_ID = process.env.GOOGLE_SHEETS_ID!;
 
+/** サービスアカウントで認証（トークン期限切れなし・共有ドライブアクセス可） */
+function getServiceAuth() {
+  const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON!);
+  return new google.auth.GoogleAuth({
+    credentials,
+    scopes: [
+      "https://www.googleapis.com/auth/drive",
+      "https://www.googleapis.com/auth/spreadsheets.readonly",
+    ],
+  });
+}
+
 /** 設定シートからDriveフォルダIDを取得（未設定なら環境変数のデフォルト） */
 async function getDriveFolderId(sheets: ReturnType<typeof google.sheets>): Promise<string> {
   try {
@@ -23,11 +35,6 @@ async function getDriveFolderId(sheets: ReturnType<typeof google.sheets>): Promi
 }
 
 export async function POST(req: NextRequest) {
-  const accessToken = req.headers.get("x-google-access-token");
-  if (!accessToken) {
-    return NextResponse.json({ error: "アクセストークンがありません" }, { status: 401 });
-  }
-
   try {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
@@ -37,11 +44,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "file と fileName は必須です" }, { status: 400 });
     }
 
-    // ユーザーのOAuthトークンで認証（Drive容量はユーザーのもの）
-    const oauth2 = new google.auth.OAuth2();
-    oauth2.setCredentials({ access_token: accessToken });
-    const sheets = google.sheets({ version: "v4", auth: oauth2 });
-    const drive = google.drive({ version: "v3", auth: oauth2 });
+    const auth = getServiceAuth();
+    const sheets = google.sheets({ version: "v4", auth });
+    const drive = google.drive({ version: "v3", auth });
 
     const folderId = await getDriveFolderId(sheets);
     if (!folderId) {
