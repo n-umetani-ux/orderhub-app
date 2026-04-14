@@ -99,7 +99,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ settings, isAdmin });
   } catch (e: unknown) {
     console.error("[settings GET]", e);
-    return NextResponse.json({ settings: {}, isAdmin: false });
+    const detail = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ settings: {}, isAdmin: false, error: detail });
   }
 }
 
