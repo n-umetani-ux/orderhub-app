@@ -3,12 +3,20 @@ import { google } from "googleapis";
 
 const SPREADSHEET_ID = process.env.GOOGLE_SHEETS_ID!;
 const SETTINGS_SHEET = "設定";
+const DEFAULT_ADMIN = "n-umetani@beat-tech.co.jp";
 
-/**
- * サービスアカウントでSheets APIクライアントを生成
- * ユーザーのOAuthトークン期限切れに影響されない
- */
-function getSheetsClient() {
+/** 読み取り専用のSheetsクライアント */
+function getReadonlyClient() {
+  const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON!);
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+  });
+  return google.sheets({ version: "v4", auth });
+}
+
+/** 読み書き可能なSheetsクライアント */
+function getReadWriteClient() {
   const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON!);
   const auth = new google.auth.GoogleAuth({
     credentials,
@@ -17,66 +25,32 @@ function getSheetsClient() {
   return google.sheets({ version: "v4", auth });
 }
 
-/**
- * 設定シートの構造: A列=key, B列=value
- * 特殊キー:
- *   "adminEmails" → カンマ区切りの管理者メールアドレス一覧
- *   "driveFolderId" → Drive保存先フォルダID
- */
-async function ensureSettingsSheet(sheets: ReturnType<typeof google.sheets>) {
-  const meta = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
-  const exists = meta.data.sheets?.some(s => s.properties?.title === SETTINGS_SHEET);
-  if (!exists) {
-    await sheets.spreadsheets.batchUpdate({
+/** 設定シートを読み取り（読み取り専用、シートがなければデフォルト値を返す） */
+async function readSettingsReadonly(): Promise<{ settings: Record<string, string>; rows: string[][] }> {
+  const sheets = getReadonlyClient();
+
+  try {
+    const res = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      requestBody: { requests: [{ addSheet: { properties: { title: SETTINGS_SHEET } } }] },
+      range: `${SETTINGS_SHEET}!A:B`,
     });
-    // ヘッダー + 初期管理者を一括書き込み
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${SETTINGS_SHEET}!A1`,
-      valueInputOption: "RAW",
-      requestBody: {
-        values: [
-          ["key", "value"],
-          ["adminEmails", "n-umetani@beat-tech.co.jp"],
-        ],
-      },
-    });
+    const rows = (res.data.values ?? []) as string[][];
+    const settings: Record<string, string> = {};
+    for (const row of rows.slice(1)) {
+      if (row[0]) settings[row[0]] = row[1] ?? "";
+    }
+    // adminEmailsが空の場合はデフォルトを返す
+    if (!settings["adminEmails"]) {
+      settings["adminEmails"] = DEFAULT_ADMIN;
+    }
+    return { settings, rows };
+  } catch {
+    // 設定シートが存在しない場合 → デフォルト値を返す
+    return {
+      settings: { adminEmails: DEFAULT_ADMIN },
+      rows: [["key", "value"], ["adminEmails", DEFAULT_ADMIN]],
+    };
   }
-}
-
-/** 設定シートの全データを読み取り */
-async function readSettings(sheets: ReturnType<typeof google.sheets>): Promise<{ settings: Record<string, string>; rows: string[][] }> {
-  await ensureSettingsSheet(sheets);
-
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SETTINGS_SHEET}!A:B`,
-  });
-
-  const rows = (res.data.values ?? []) as string[][];
-  const settings: Record<string, string> = {};
-  for (const row of rows.slice(1)) {
-    if (row[0]) settings[row[0]] = row[1] ?? "";
-  }
-
-  // adminEmails が未設定の場合、デフォルト管理者を自動登録
-  if (!settings["adminEmails"]) {
-    const defaultAdmin = "n-umetani@beat-tech.co.jp";
-    try {
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: SPREADSHEET_ID,
-        range: `${SETTINGS_SHEET}!A:B`,
-        valueInputOption: "RAW",
-        requestBody: { values: [["adminEmails", defaultAdmin]] },
-      });
-      settings["adminEmails"] = defaultAdmin;
-      rows.push(["adminEmails", defaultAdmin]);
-    } catch { /* ignore */ }
-  }
-
-  return { settings, rows };
 }
 
 /** 管理者メール一覧を取得 */
@@ -86,21 +60,19 @@ function parseAdminEmails(settings: Record<string, string>): string[] {
 }
 
 export async function GET(req: NextRequest) {
-  // リクエスト元のメールアドレス（管理者判定用）
   const userEmail = req.headers.get("x-user-email") ?? "";
 
   try {
-    const sheets = getSheetsClient();
-    const { settings } = await readSettings(sheets);
-
+    const { settings } = await readSettingsReadonly();
     const adminEmails = parseAdminEmails(settings);
     const isAdmin = adminEmails.includes(userEmail);
 
     return NextResponse.json({ settings, isAdmin });
   } catch (e: unknown) {
     console.error("[settings GET]", e);
-    const detail = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ settings: {}, isAdmin: false, error: detail });
+    // 完全にエラーの場合もデフォルト管理者は認識する
+    const isAdmin = userEmail === DEFAULT_ADMIN;
+    return NextResponse.json({ settings: { adminEmails: DEFAULT_ADMIN }, isAdmin });
   }
 }
 
@@ -113,13 +85,34 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "key は必須です" }, { status: 400 });
     }
 
-    const sheets = getSheetsClient();
-    const { settings, rows } = await readSettings(sheets);
-
-    // 管理者チェック
+    // 管理者チェック（読み取り専用で確認）
+    const { settings, rows } = await readSettingsReadonly();
     const adminEmails = parseAdminEmails(settings);
     if (!adminEmails.includes(userEmail)) {
       return NextResponse.json({ error: "管理者権限がありません" }, { status: 403 });
+    }
+
+    // 書き込みクライアントで保存
+    const sheets = getReadWriteClient();
+
+    // 設定シートが存在するか確認、なければ作成
+    try {
+      const meta = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+      const exists = meta.data.sheets?.some(s => s.properties?.title === SETTINGS_SHEET);
+      if (!exists) {
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId: SPREADSHEET_ID,
+          requestBody: { requests: [{ addSheet: { properties: { title: SETTINGS_SHEET } } }] },
+        });
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: SPREADSHEET_ID,
+          range: `${SETTINGS_SHEET}!A1`,
+          valueInputOption: "RAW",
+          requestBody: { values: [["key", "value"], ["adminEmails", DEFAULT_ADMIN]] },
+        });
+      }
+    } catch (e) {
+      console.error("[settings POST] シート作成エラー:", e);
     }
 
     // 既存キーの行を探す
@@ -129,7 +122,6 @@ export async function POST(req: NextRequest) {
     }
 
     if (rowIdx >= 0) {
-      // 既存行を更新
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
         range: `${SETTINGS_SHEET}!B${rowIdx + 1}`,
@@ -137,7 +129,6 @@ export async function POST(req: NextRequest) {
         requestBody: { values: [[body.value]] },
       });
     } else {
-      // 新規行を追加
       await sheets.spreadsheets.values.append({
         spreadsheetId: SPREADSHEET_ID,
         range: `${SETTINGS_SHEET}!A:B`,
