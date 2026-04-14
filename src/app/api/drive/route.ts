@@ -25,10 +25,14 @@ async function getDriveFolderId(): Promise<string> {
     });
     const rows = (res.data.values ?? []) as string[][];
     for (const row of rows) {
-      if (row[0] === "driveFolderId" && row[1]) return row[1];
+      if (row[0] === "driveFolderId" && row[1]) {
+        console.log("[drive] フォルダID(設定シート):", row[1]);
+        return row[1];
+      }
     }
-  } catch {
-    // 設定シートが無い場合は無視
+    console.log("[drive] 設定シートにdriveFolderIdなし、デフォルト使用:", DEFAULT_DRIVE_FOLDER_ID);
+  } catch (e) {
+    console.error("[drive] 設定シート読み取りエラー、デフォルト使用:", DEFAULT_DRIVE_FOLDER_ID, e);
   }
   return DEFAULT_DRIVE_FOLDER_ID;
 }
