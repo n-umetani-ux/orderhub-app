@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useAuth } from "@/lib/auth-context";
 
 type Screen = "dashboard" | "upload";
@@ -156,9 +157,9 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
         )}
       </nav>
 
-      {/* Settings modal */}
-      {showSettings && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowSettings(false)}>
+      {/* Settings modal — portalでbody直下に描画してz-index問題を回避 */}
+      {showSettings && createPortal(
+        <div className="fixed inset-0 flex items-center justify-center bg-black/40" style={{ zIndex: 9999 }} onClick={() => setShowSettings(false)}>
           <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md mx-4" onClick={ev => ev.stopPropagation()}>
             <h2 className="text-lg font-bold mb-4" style={{ color: "#111827" }}>管理者設定</h2>
 
@@ -219,7 +220,8 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* User */}
