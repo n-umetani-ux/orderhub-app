@@ -182,7 +182,7 @@ async function extractFromPdf(
 }
 
 export default function UploadPage({ prefill, onBack }: UploadPageProps) {
-  const { user, accessToken } = useAuth();
+  const { user, accessToken, reauth } = useAuth();
 
   const cachedCount = useMemo(() => {
     const cache = loadCache(user?.email ?? "");
@@ -482,12 +482,33 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
       const form = new FormData();
       form.append("file", activeEntry.file);
       form.append("fileName", fileName);
-      const res = await fetch("/api/drive", {
+      let currentToken = accessToken;
+      let res = await fetch("/api/drive", {
         method: "POST",
-        headers: accessToken ? { "x-google-access-token": accessToken } : {},
+        headers: currentToken ? { "x-google-access-token": currentToken } : {},
         body: form,
       });
-      const data = await res.json();
+      let data = await res.json();
+
+      // トークン期限切れ → 再認証してリトライ
+      if (data.needReauth && reauth) {
+        try {
+          await reauth();
+          currentToken = sessionStorage.getItem("orderhub_access_token");
+          const retryForm = new FormData();
+          retryForm.append("file", activeEntry.file);
+          retryForm.append("fileName", fileName);
+          res = await fetch("/api/drive", {
+            method: "POST",
+            headers: currentToken ? { "x-google-access-token": currentToken } : {},
+            body: retryForm,
+          });
+          data = await res.json();
+        } catch {
+          throw new Error("再認証に失敗しました。ログアウトして再ログインしてください。");
+        }
+      }
+
       if (data.error) throw new Error(data.error);
 
       if (targetType === "multi(チーム)") {

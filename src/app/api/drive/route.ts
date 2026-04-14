@@ -5,21 +5,20 @@ import { Readable } from "stream";
 const DEFAULT_DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID ?? "";
 const SPREADSHEET_ID = process.env.GOOGLE_SHEETS_ID!;
 
-/** サービスアカウントで認証（トークン期限切れなし・共有ドライブアクセス可） */
-function getServiceAuth() {
+/** サービスアカウントでSheetsクライアント（設定読み取り用） */
+function getServiceSheets() {
   const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON!);
-  return new google.auth.GoogleAuth({
+  const auth = new google.auth.GoogleAuth({
     credentials,
-    scopes: [
-      "https://www.googleapis.com/auth/drive",
-      "https://www.googleapis.com/auth/spreadsheets.readonly",
-    ],
+    scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
   });
+  return google.sheets({ version: "v4", auth });
 }
 
 /** 設定シートからDriveフォルダIDを取得（未設定なら環境変数のデフォルト） */
-async function getDriveFolderId(sheets: ReturnType<typeof google.sheets>): Promise<string> {
+async function getDriveFolderId(): Promise<string> {
   try {
+    const sheets = getServiceSheets();
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
       range: "設定!A:B",
@@ -35,6 +34,11 @@ async function getDriveFolderId(sheets: ReturnType<typeof google.sheets>): Promi
 }
 
 export async function POST(req: NextRequest) {
+  const accessToken = req.headers.get("x-google-access-token");
+  if (!accessToken) {
+    return NextResponse.json({ error: "アクセストークンがありません" }, { status: 401 });
+  }
+
   try {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
@@ -44,11 +48,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "file と fileName は必須です" }, { status: 400 });
     }
 
-    const auth = getServiceAuth();
-    const sheets = google.sheets({ version: "v4", auth });
-    const drive = google.drive({ version: "v3", auth });
+    // ユーザーのOAuthトークンでDrive操作（共有ドライブへのアクセス権限あり）
+    const oauth2 = new google.auth.OAuth2();
+    oauth2.setCredentials({ access_token: accessToken });
+    const drive = google.drive({ version: "v3", auth: oauth2 });
 
-    const folderId = await getDriveFolderId(sheets);
+    const folderId = await getDriveFolderId();
     if (!folderId) {
       return NextResponse.json({ error: "GOOGLE_DRIVE_FOLDER_ID が未設定です" }, { status: 500 });
     }
@@ -77,6 +82,15 @@ export async function POST(req: NextRequest) {
     const apiStatus = gaxiosErr?.response?.status;
     const apiData = gaxiosErr?.response?.data;
     console.error("[drive API detail]", { detail, apiStatus, apiData });
+
+    // トークン期限切れの場合は401を返す（フロントで再認証を促す）
+    if (apiStatus === 401 || apiStatus === 403) {
+      return NextResponse.json(
+        { error: "認証が期限切れです。再ログインしてください。", needReauth: true },
+        { status: 401 },
+      );
+    }
+
     return NextResponse.json(
       { error: `Driveへのアップロードに失敗しました: ${detail}`, apiStatus, apiData },
       { status: apiStatus ?? 500 },
