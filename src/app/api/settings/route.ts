@@ -15,16 +15,6 @@ function getReadonlyClient() {
   return google.sheets({ version: "v4", auth });
 }
 
-/** 読み書き可能なSheetsクライアント */
-function getReadWriteClient() {
-  const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON!);
-  const auth = new google.auth.GoogleAuth({
-    credentials,
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-  });
-  return google.sheets({ version: "v4", auth });
-}
-
 /** 設定シートを読み取り（読み取り専用、シートがなければデフォルト値を返す） */
 async function readSettingsReadonly(): Promise<{ settings: Record<string, string>; rows: string[][] }> {
   const sheets = getReadonlyClient();
@@ -78,6 +68,10 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const userEmail = req.headers.get("x-user-email") ?? "";
+  const accessToken = req.headers.get("x-google-access-token");
+  if (!accessToken) {
+    return NextResponse.json({ error: "アクセストークンがありません" }, { status: 401 });
+  }
 
   try {
     const body = await req.json() as { key: string; value: string };
@@ -85,15 +79,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "key は必須です" }, { status: 400 });
     }
 
-    // 管理者チェック（読み取り専用で確認）
+    // 管理者チェック（読み取り専用サービスアカウントで確認）
     const { settings, rows } = await readSettingsReadonly();
     const adminEmails = parseAdminEmails(settings);
     if (!adminEmails.includes(userEmail)) {
       return NextResponse.json({ error: "管理者権限がありません" }, { status: 403 });
     }
 
-    // 書き込みクライアントで保存
-    const sheets = getReadWriteClient();
+    // ユーザーのOAuthトークンで書き込み（スプレッドシートの編集権限を利用）
+    const oauth2 = new google.auth.OAuth2();
+    oauth2.setCredentials({ access_token: accessToken });
+    const sheets = google.sheets({ version: "v4", auth: oauth2 });
 
     // 設定シートが存在するか確認、なければ作成
     try {

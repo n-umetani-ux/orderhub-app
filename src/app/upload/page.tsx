@@ -700,7 +700,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                 <summary className="text-xs text-slate-600 cursor-pointer select-none">
                   抽出テキスト確認（診断用）— {activeEntry.rawText.length}字 — {activeEntry.file.name}
                 </summary>
-                <pre className="mt-1 rounded-lg bg-slate-900 p-3 text-[11px] text-slate-300 whitespace-pre-wrap break-all leading-relaxed max-h-64 overflow-auto">
+                <pre className="mt-1 rounded-lg p-3 text-[11px] whitespace-pre-wrap break-all leading-relaxed max-h-64 overflow-auto" style={{ backgroundColor: "#f8fafc", color: "#1e293b" }}>
                   {activeEntry.rawText}
                 </pre>
               </details>

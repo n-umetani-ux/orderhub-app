@@ -56,9 +56,11 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
   useEffect(() => { onAdminChange?.(isAdmin); }, [isAdmin, onAdminChange]);
 
   const saveSetting = async (key: string, value: string) => {
+    const headers: Record<string, string> = { "Content-Type": "application/json", "x-user-email": userEmail };
+    if (accessToken) headers["x-google-access-token"] = accessToken;
     const r = await fetch("/api/settings", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-user-email": userEmail },
+      headers,
       body: JSON.stringify({ key, value }),
     });
     const data = await r.json();
