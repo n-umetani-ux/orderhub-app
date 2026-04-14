@@ -5,34 +5,19 @@ import { Readable } from "stream";
 const DEFAULT_DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID ?? "";
 const SPREADSHEET_ID = process.env.GOOGLE_SHEETS_ID!;
 
-/** サービスアカウントでSheetsクライアント（設定読み取り用） */
-function getServiceSheets() {
-  const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON!);
-  const auth = new google.auth.GoogleAuth({
-    credentials,
-    scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
-  });
-  return google.sheets({ version: "v4", auth });
-}
-
 /** 設定シートからDriveフォルダIDを取得（未設定なら環境変数のデフォルト） */
-async function getDriveFolderId(): Promise<string> {
+async function getDriveFolderId(sheets: ReturnType<typeof google.sheets>): Promise<string> {
   try {
-    const sheets = getServiceSheets();
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
       range: "設定!A:B",
     });
     const rows = (res.data.values ?? []) as string[][];
     for (const row of rows) {
-      if (row[0] === "driveFolderId" && row[1]) {
-        console.log("[drive] フォルダID(設定シート):", row[1]);
-        return row[1];
-      }
+      if (row[0] === "driveFolderId" && row[1]) return row[1];
     }
-    console.log("[drive] 設定シートにdriveFolderIdなし、デフォルト使用:", DEFAULT_DRIVE_FOLDER_ID);
-  } catch (e) {
-    console.error("[drive] 設定シート読み取りエラー、デフォルト使用:", DEFAULT_DRIVE_FOLDER_ID, e);
+  } catch {
+    // 設定シートが無い場合は無視
   }
   return DEFAULT_DRIVE_FOLDER_ID;
 }
@@ -52,12 +37,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "file と fileName は必須です" }, { status: 400 });
     }
 
-    // ユーザーのOAuthトークンでDrive操作（共有ドライブへのアクセス権限あり）
     const oauth2 = new google.auth.OAuth2();
     oauth2.setCredentials({ access_token: accessToken });
+    const sheets = google.sheets({ version: "v4", auth: oauth2 });
     const drive = google.drive({ version: "v3", auth: oauth2 });
 
-    const folderId = await getDriveFolderId();
+    const folderId = await getDriveFolderId(sheets);
     if (!folderId) {
       return NextResponse.json({ error: "GOOGLE_DRIVE_FOLDER_ID が未設定です" }, { status: 500 });
     }
@@ -87,7 +72,6 @@ export async function POST(req: NextRequest) {
     const apiData = gaxiosErr?.response?.data;
     console.error("[drive API detail]", { detail, apiStatus, apiData });
 
-    // トークン期限切れの場合は401を返す（フロントで再認証を促す）
     if (apiStatus === 401 || apiStatus === 403) {
       return NextResponse.json(
         { error: "認証が期限切れです。再ログインしてください。", needReauth: true },

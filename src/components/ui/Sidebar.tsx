@@ -31,12 +31,12 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
 
   const userEmail = user?.email ?? "";
 
-  // 設定を読み込み（管理者判定含む）— サービスアカウント使用のためaccessToken不要
+  // 設定を読み込み（管理者判定含む）
   const loadSettings = useCallback(async () => {
-    if (!userEmail) return;
+    if (!userEmail || !accessToken) return;
     try {
       const r = await fetch("/api/settings", {
-        headers: { "x-user-email": userEmail },
+        headers: { "x-user-email": userEmail, "x-google-access-token": accessToken },
       });
       const d = await r.json();
       setIsAdmin(d.isAdmin === true);
@@ -49,7 +49,7 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
         setAdminInput(d.settings.adminEmails);
       }
     } catch { /* ignore */ }
-  }, [userEmail]);
+  }, [userEmail, accessToken]);
 
   useEffect(() => { loadSettings(); }, [loadSettings]);
 

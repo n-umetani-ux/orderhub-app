@@ -5,20 +5,15 @@ const SPREADSHEET_ID = process.env.GOOGLE_SHEETS_ID!;
 const SETTINGS_SHEET = "設定";
 const DEFAULT_ADMIN = "n-umetani@beat-tech.co.jp";
 
-/** 読み取り専用のSheetsクライアント */
-function getReadonlyClient() {
-  const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON!);
-  const auth = new google.auth.GoogleAuth({
-    credentials,
-    scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
-  });
-  return google.sheets({ version: "v4", auth });
+/** ユーザーのOAuthトークンでSheetsクライアント生成 */
+function getUserSheets(accessToken: string) {
+  const oauth2 = new google.auth.OAuth2();
+  oauth2.setCredentials({ access_token: accessToken });
+  return google.sheets({ version: "v4", auth: oauth2 });
 }
 
-/** 設定シートを読み取り（読み取り専用、シートがなければデフォルト値を返す） */
-async function readSettingsReadonly(): Promise<{ settings: Record<string, string>; rows: string[][] }> {
-  const sheets = getReadonlyClient();
-
+/** 設定シートを読み取り（シートがなければデフォルト値を返す） */
+async function readSettings(sheets: ReturnType<typeof google.sheets>): Promise<{ settings: Record<string, string>; rows: string[][] }> {
   try {
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
@@ -29,7 +24,6 @@ async function readSettingsReadonly(): Promise<{ settings: Record<string, string
     for (const row of rows.slice(1)) {
       if (row[0]) settings[row[0]] = row[1] ?? "";
     }
-    // adminEmailsが空の場合はデフォルトを返す
     if (!settings["adminEmails"]) {
       settings["adminEmails"] = DEFAULT_ADMIN;
     }
@@ -51,16 +45,23 @@ function parseAdminEmails(settings: Record<string, string>): string[] {
 
 export async function GET(req: NextRequest) {
   const userEmail = req.headers.get("x-user-email") ?? "";
+  const accessToken = req.headers.get("x-google-access-token");
+
+  // トークンがない場合はデフォルト管理者のみ認識
+  if (!accessToken) {
+    const isAdmin = userEmail === DEFAULT_ADMIN;
+    return NextResponse.json({ settings: { adminEmails: DEFAULT_ADMIN }, isAdmin });
+  }
 
   try {
-    const { settings } = await readSettingsReadonly();
+    const sheets = getUserSheets(accessToken);
+    const { settings } = await readSettings(sheets);
     const adminEmails = parseAdminEmails(settings);
     const isAdmin = adminEmails.includes(userEmail);
 
     return NextResponse.json({ settings, isAdmin });
   } catch (e: unknown) {
     console.error("[settings GET]", e);
-    // 完全にエラーの場合もデフォルト管理者は認識する
     const isAdmin = userEmail === DEFAULT_ADMIN;
     return NextResponse.json({ settings: { adminEmails: DEFAULT_ADMIN }, isAdmin });
   }
@@ -79,17 +80,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "key は必須です" }, { status: 400 });
     }
 
-    // 管理者チェック（読み取り専用サービスアカウントで確認）
-    const { settings, rows } = await readSettingsReadonly();
+    const sheets = getUserSheets(accessToken);
+    const { settings, rows } = await readSettings(sheets);
+
+    // 管理者チェック
     const adminEmails = parseAdminEmails(settings);
     if (!adminEmails.includes(userEmail)) {
       return NextResponse.json({ error: "管理者権限がありません" }, { status: 403 });
     }
-
-    // ユーザーのOAuthトークンで書き込み（スプレッドシートの編集権限を利用）
-    const oauth2 = new google.auth.OAuth2();
-    oauth2.setCredentials({ access_token: accessToken });
-    const sheets = google.sheets({ version: "v4", auth: oauth2 });
 
     // 設定シートが存在するか確認、なければ作成
     try {
