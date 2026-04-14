@@ -223,6 +223,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
   const [dragging, setDragging]     = useState(false);
   const [uploading, setUploading]   = useState(false);
   const [uploadResult, setUploadResult] = useState<string | null>(null);
+  const [uploadFolderId, setUploadFolderId] = useState<string | null>(null);
   const [uploadError, setUploadError]   = useState<string | null>(null);
   const [existingOrders, setExistingOrders] = useState<OrderRecord[]>([]);
   const [preCheckWarnings, setPreCheckWarnings] = useState<ValidationWarning[]>([]);
@@ -559,6 +560,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
       }
 
       setUploadResult(data.link);
+      if (data.folderId) setUploadFolderId(data.folderId);
     } catch (e: unknown) {
       setUploadError(e instanceof Error ? e.message : "アップロードに失敗しました");
     } finally {
@@ -595,14 +597,16 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
           <a href={uploadResult} target="_blank" rel="noreferrer" className="px-5 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors">
             Drive で確認
           </a>
-          <a
-            href={`https://drive.google.com/drive/folders/${process.env.NEXT_PUBLIC_DRIVE_FOLDER_ID || "1jIhIKa9b-Kzv3niWIsMRw51GS4IVjPFo"}`}
-            target="_blank"
-            rel="noreferrer"
-            className="ml-3 px-5 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-colors"
-          >
-            📁 保存フォルダを開く
-          </a>
+          {uploadFolderId && (
+            <a
+              href={`https://drive.google.com/drive/folders/${uploadFolderId}`}
+              target="_blank"
+              rel="noreferrer"
+              className="ml-3 px-5 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-colors"
+            >
+              📁 保存フォルダを開く
+            </a>
+          )}
           <button onClick={onBack} className="ml-3 px-5 py-2.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-600 hover:bg-slate-50 transition-colors">
             一覧へ戻る
           </button>

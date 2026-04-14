@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
       supportsAllDrives: true,
     });
 
-    return NextResponse.json({ link: res.data.webViewLink ?? res.data.id });
+    return NextResponse.json({ link: res.data.webViewLink ?? res.data.id, folderId });
   } catch (e: unknown) {
     console.error("[drive API]", e);
     const detail = e instanceof Error ? e.message : String(e);
