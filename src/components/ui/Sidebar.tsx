@@ -13,7 +13,7 @@ interface SidebarProps {
   onAdminChange?: (isAdmin: boolean) => void;
 }
 
-const DEFAULT_DRIVE_FOLDER_ID = process.env.NEXT_PUBLIC_DRIVE_FOLDER_ID || "1jIhIKa9b-Kzv3niWIsMRw51GS4IVjPFo";
+const DEFAULT_DRIVE_FOLDER_ID = process.env.NEXT_PUBLIC_DRIVE_FOLDER_ID || "1oCHSWVMh1XVI0yNBmbbi9bK-O8qwrR5k";
 
 export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: SidebarProps) {
   const { user, accessToken, signOut } = useAuth();
