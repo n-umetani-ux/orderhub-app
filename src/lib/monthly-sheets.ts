@@ -45,6 +45,10 @@ export function getActiveSheetIds(): { id: string; label: string; yearMonth: str
     result.push({ id: MONTHLY_SHEET_IDS[nextKey], label: `${nextMonth}月`, yearMonth: nextKey });
   }
 
+  if (result.length === 0) {
+    console.warn(`[monthly-sheets] 稼働一覧のシートIDが未設定です: ${currentKey}`);
+  }
+
   return result;
 }
 
