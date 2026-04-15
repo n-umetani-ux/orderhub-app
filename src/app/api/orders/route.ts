@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
 
-const SPREADSHEET_ID = process.env.GOOGLE_SHEETS_ID!;
+const SPREADSHEET_ID = process.env.ORDER_LEDGER_SHEET_ID ?? process.env.GOOGLE_SHEETS_ID!;
 const ORDERS_SHEET = "注文書台帳";
 
 const HEADERS = [

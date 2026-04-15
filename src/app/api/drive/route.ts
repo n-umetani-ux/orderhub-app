@@ -3,7 +3,7 @@ import { google } from "googleapis";
 import { Readable } from "stream";
 
 const DEFAULT_DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID ?? "";
-const SPREADSHEET_ID = process.env.GOOGLE_SHEETS_ID!;
+const SPREADSHEET_ID = process.env.ORDER_LEDGER_SHEET_ID ?? process.env.GOOGLE_SHEETS_ID!;
 
 /** 設定シートからDriveフォルダIDを取得（未設定なら環境変数のデフォルト） */
 async function getDriveFolderId(sheets: ReturnType<typeof google.sheets>): Promise<string> {

@@ -10,39 +10,16 @@ const STANDBY_SECTION = "待機一覧";
 const HEADER_PATTERNS = ["manNo.", "No.", "PJcode"];
 
 /* ────────────────────────────────────────────
-   サーバーサイドキャッシュ（globalThis）
-   管理者（稼働一覧にアクセス可能なユーザー）がダッシュボードを
-   読み込んだ際にキャッシュし、一般ユーザーはキャッシュを参照する。
+   サーバーサイドキャッシュ（2層構造）
+   L1: globalThis メモリ（同一Vercelインスタンス内で高速）
+   L2: Google Sheets「稼働キャッシュ」シート（インスタンス間で永続共有）
+
+   管理者がダッシュボードを開く → L1 + L2 を更新
+   一般ユーザー → L1 → L2 → 503 の順にフォールバック
    ──────────────────────────────────────────── */
-const CACHE_TTL_MS = 72 * 60 * 60 * 1000; // 72時間（管理者アクセスで随時更新）
-
-interface ServerCache {
-  /** parseRows 済みのエンジニアデータ（機密列除外済み） */
-  engineers: ParsedEngineer[];
-  /** manNo → 稼働月のセット */
-  activeMonths: Map<string, Set<string>>;
-  /** 読み込み済み月ラベル */
-  loadedMonths: string[];
-  /** キャッシュ作成時刻 */
-  cachedAt: number;
-}
-
-// globalThis にキャッシュを保持（Vercel serverless でもコールドスタートまで維持）
-const g = globalThis as unknown as { __kadouCache?: ServerCache };
-
-function getServerCache(): ServerCache | null {
-  const c = g.__kadouCache;
-  if (!c) return null;
-  if (Date.now() - c.cachedAt > CACHE_TTL_MS) {
-    g.__kadouCache = undefined;
-    return null;
-  }
-  return c;
-}
-
-function setServerCache(data: Omit<ServerCache, "cachedAt">) {
-  g.__kadouCache = { ...data, cachedAt: Date.now() };
-}
+const CACHE_TTL_MS = 72 * 60 * 60 * 1000; // 72時間
+const CACHE_SHEET = "稼働キャッシュ";
+const CACHE_HEADERS = ["manNo", "kubun", "name", "activity", "ending", "customer", "tantou", "customerCode", "loc", "activeMonths", "cachedAt", "loadedMonths"];
 
 type Loc = "東京" | "大阪" | "福岡";
 
@@ -56,6 +33,138 @@ interface ParsedEngineer {
   tantou: string;
   customerCode: string;
   loc: Loc;
+}
+
+interface ServerCache {
+  engineers: ParsedEngineer[];
+  activeMonths: Map<string, Set<string>>;
+  loadedMonths: string[];
+  cachedAt: number;
+}
+
+// L1: globalThis メモリキャッシュ
+const g = globalThis as unknown as { __kadouCache?: ServerCache };
+
+function getL1Cache(): ServerCache | null {
+  const c = g.__kadouCache;
+  if (!c) return null;
+  if (Date.now() - c.cachedAt > CACHE_TTL_MS) {
+    g.__kadouCache = undefined;
+    return null;
+  }
+  return c;
+}
+
+function setL1Cache(data: Omit<ServerCache, "cachedAt">) {
+  g.__kadouCache = { ...data, cachedAt: Date.now() };
+}
+
+// L2: Google Sheets 永続キャッシュ（書き込み）
+async function writeL2Cache(
+  sheets: ReturnType<typeof google.sheets>,
+  engineers: ParsedEngineer[],
+  activeMonths: Map<string, Set<string>>,
+  loadedMonths: string[],
+) {
+  try {
+    // シートの存在確認・作成
+    const meta = await sheets.spreadsheets.get({ spreadsheetId: LEDGER_SHEET_ID });
+    const exists = meta.data.sheets?.some(s => s.properties?.title === CACHE_SHEET);
+    if (!exists) {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: LEDGER_SHEET_ID,
+        requestBody: { requests: [{ addSheet: { properties: { title: CACHE_SHEET } } }] },
+      });
+    }
+
+    const now = new Date().toISOString();
+    const lm = JSON.stringify(loadedMonths);
+    const rows = engineers.map(e => [
+      e.manNo, e.kubun, e.name, String(e.activity), String(e.ending),
+      e.customer, e.tantou, e.customerCode, e.loc,
+      JSON.stringify(Array.from(activeMonths.get(e.manNo) ?? [])),
+      now, lm,
+    ]);
+
+    // ヘッダー + データを一括書き込み（既存データをクリアして上書き）
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: LEDGER_SHEET_ID,
+      range: `${CACHE_SHEET}!A1`,
+      valueInputOption: "RAW",
+      requestBody: { values: [CACHE_HEADERS, ...rows] },
+    });
+
+    // 余剰行をクリア（前回より行数が少ない場合）
+    const clearStart = rows.length + 2; // ヘッダー(1) + データ(rows.length) + 1
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId: LEDGER_SHEET_ID,
+      range: `${CACHE_SHEET}!A${clearStart}:L10000`,
+    });
+
+    console.log(`[sheets API] L2キャッシュ書き込み完了: ${engineers.length}名`);
+  } catch (err) {
+    console.warn("[sheets API] L2キャッシュ書き込み失敗:", err);
+  }
+}
+
+// L2: Google Sheets 永続キャッシュ（読み込み）
+async function readL2Cache(
+  sheets: ReturnType<typeof google.sheets>,
+): Promise<ServerCache | null> {
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: LEDGER_SHEET_ID,
+      range: `${CACHE_SHEET}!A:L`,
+    });
+    const rows = (res.data.values ?? []) as string[][];
+    if (rows.length <= 1) return null; // ヘッダーのみ
+
+    const engineers: ParsedEngineer[] = [];
+    const activeMonths = new Map<string, Set<string>>();
+    let cachedAtStr = "";
+    let loadedMonths: string[] = [];
+
+    for (const row of rows.slice(1)) {
+      if (!row[0]) continue;
+      const eng: ParsedEngineer = {
+        manNo: row[0],
+        kubun: row[1] ?? "",
+        name: row[2] ?? "",
+        activity: parseFloat(row[3] ?? "0") || 0,
+        ending: parseFloat(row[4] ?? "0") || 0,
+        customer: row[5] ?? "",
+        tantou: row[6] ?? "",
+        customerCode: row[7] ?? "",
+        loc: (row[8] ?? "東京") as Loc,
+      };
+      engineers.push(eng);
+
+      // activeMonths
+      try {
+        const months = JSON.parse(row[9] ?? "[]") as string[];
+        activeMonths.set(eng.manNo, new Set(months));
+      } catch {
+        activeMonths.set(eng.manNo, new Set());
+      }
+
+      if (!cachedAtStr && row[10]) cachedAtStr = row[10];
+      if (loadedMonths.length === 0 && row[11]) {
+        try { loadedMonths = JSON.parse(row[11]) as string[]; } catch { /* ignore */ }
+      }
+    }
+
+    if (engineers.length === 0) return null;
+
+    const cachedAt = cachedAtStr ? new Date(cachedAtStr).getTime() : 0;
+    if (Date.now() - cachedAt > CACHE_TTL_MS) {
+      console.log("[sheets API] L2キャッシュ期限切れ");
+      return null;
+    }
+
+    return { engineers, activeMonths, loadedMonths, cachedAt };
+  } catch {
+    return null;
+  }
 }
 
 const SHEET_LOCS: Record<string, Loc> = {
@@ -126,9 +235,9 @@ export async function GET(req: NextRequest) {
     const sheets = google.sheets({ version: "v4", auth: oauth2 });
 
     /* ──────────────────────────────────────────
-       Step 1: 稼働一覧の取得（キャッシュ付き）
-       - 読み取り成功 → 管理者/幹部 → キャッシュ更新
-       - 読み取り失敗 → 一般ユーザー → キャッシュから返す
+       Step 1: 稼働一覧の取得（2層キャッシュ付き）
+       成功 → 管理者/幹部 → L1 + L2 更新
+       失敗 → L1 → L2 → 503
        ────────────────────────────────────────── */
     let deduped: ParsedEngineer[];
     let manNoActiveMonths: Map<string, Set<string>>;
@@ -173,13 +282,13 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      // manNo で重複除去（同じ番号が複数シートに存在する場合、後のシート=翌月を優先）
+      // manNo で重複除去
       const engineerMap = new Map<string, ParsedEngineer>();
       for (const e of raw) {
         engineerMap.set(e.manNo, e);
       }
 
-      // 全シート読み込み失敗の場合（権限不足）→ キャッシュにフォールバック
+      // 全シート読み込み失敗 → キャッシュにフォールバック
       if (engineerMap.size === 0 && tempLoadedMonths.length === 0) {
         throw new Error("稼働一覧の全シート読み込み失敗");
       }
@@ -188,14 +297,29 @@ export async function GET(req: NextRequest) {
       manNoActiveMonths = tempActiveMonths;
       loadedMonths = tempLoadedMonths;
 
-      // ✅ 読み込み成功 → キャッシュ更新
-      setServerCache({ engineers: deduped, activeMonths: tempActiveMonths, loadedMonths: tempLoadedMonths });
-      console.log(`[sheets API] サーバーキャッシュ更新: ${deduped.length}名`);
+      // ✅ 読み込み成功 → L1 + L2 キャッシュ更新
+      setL1Cache({ engineers: deduped, activeMonths: tempActiveMonths, loadedMonths: tempLoadedMonths });
+      console.log(`[sheets API] L1キャッシュ更新: ${deduped.length}名`);
+
+      // L2（Google Sheets）への書き込みは非同期（レスポンスをブロックしない）
+      writeL2Cache(sheets, deduped, tempActiveMonths, tempLoadedMonths).catch(() => {});
 
     } catch (sheetErr) {
       // 稼働一覧へのアクセス権がないユーザー → キャッシュを使う
-      console.warn("[sheets API] 稼働一覧の読み込み失敗（権限不足）、キャッシュを確認:", sheetErr);
-      const cached = getServerCache();
+      console.warn("[sheets API] 稼働一覧の読み込み失敗（権限不足）、キャッシュを確認");
+
+      // L1 チェック
+      let cached = getL1Cache();
+      if (!cached) {
+        // L2 チェック（Google Sheets永続キャッシュ）
+        console.log("[sheets API] L1キャッシュなし → L2（Google Sheets）を確認");
+        cached = await readL2Cache(sheets);
+        if (cached) {
+          // L2 → L1 に昇格
+          setL1Cache({ engineers: cached.engineers, activeMonths: cached.activeMonths, loadedMonths: cached.loadedMonths });
+        }
+      }
+
       if (!cached) {
         return NextResponse.json(
           { error: "稼働データのキャッシュがありません。管理者が先にダッシュボードを開いてください。", needAdminLoad: true },

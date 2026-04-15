@@ -16,8 +16,11 @@ const MONTHLY_SHEET_IDS: Record<string, string> = {
   "2026-05": "17QxNSoW5XTB0F9i5yl55FfINQu9W_702ltF0guVwGw4",
 };
 
-// デフォルト（環境変数のフォールバック）
+// 稼働一覧のフォールバック（環境変数）
 const DEFAULT_SHEET_ID = process.env.GOOGLE_SHEETS_ID ?? "";
+
+// 注文書管理システム専用スプレッドシート（全営業メンバーがアクセス可能）
+const ORDER_LEDGER_ID = process.env.ORDER_LEDGER_SHEET_ID ?? DEFAULT_SHEET_ID;
 
 /**
  * 現在参照すべき稼働一覧スプレッドシートIDの一覧を返す
@@ -56,5 +59,5 @@ export function getActiveSheetIds(): { id: string; label: string; yearMonth: str
  * 注文書台帳・アーカイブ用のスプレッドシートID（固定）
  */
 export function getOrderLedgerSheetId(): string {
-  return DEFAULT_SHEET_ID;
+  return ORDER_LEDGER_ID;
 }
