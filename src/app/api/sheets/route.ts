@@ -301,8 +301,8 @@ export async function GET(req: NextRequest) {
       setL1Cache({ engineers: deduped, activeMonths: tempActiveMonths, loadedMonths: tempLoadedMonths });
       console.log(`[sheets API] L1キャッシュ更新: ${deduped.length}名`);
 
-      // L2（Google Sheets）への書き込みは非同期（レスポンスをブロックしない）
-      writeL2Cache(sheets, deduped, tempActiveMonths, tempLoadedMonths).catch(() => {});
+      // L2（Google Sheets）への書き込み
+      await writeL2Cache(sheets, deduped, tempActiveMonths, tempLoadedMonths);
 
     } catch (sheetErr) {
       // 稼働一覧へのアクセス権がないユーザー → キャッシュを使う
