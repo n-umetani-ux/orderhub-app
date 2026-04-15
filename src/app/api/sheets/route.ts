@@ -67,6 +67,7 @@ async function writeL2Cache(
   loadedMonths: string[],
 ) {
   try {
+    console.log(`[sheets API] L2キャッシュ書き込み先: ${LEDGER_SHEET_ID}`);
     // シートの存在確認・作成
     const meta = await sheets.spreadsheets.get({ spreadsheetId: LEDGER_SHEET_ID });
     const exists = meta.data.sheets?.some(s => s.properties?.title === CACHE_SHEET);
@@ -104,6 +105,7 @@ async function writeL2Cache(
     console.log(`[sheets API] L2キャッシュ書き込み完了: ${engineers.length}名`);
   } catch (err) {
     console.warn("[sheets API] L2キャッシュ書き込み失敗:", err);
+    throw err; // 呼び出し元でエラーをキャッチして_debugに含める
   }
 }
 
@@ -243,6 +245,7 @@ export async function GET(req: NextRequest) {
     let manNoActiveMonths: Map<string, Set<string>>;
     let loadedMonths: string[];
     let fromCache = false;
+    let l2Error: string | null = null;
 
     try {
       // 稼働一覧スプレッドシートを読み込み
@@ -302,7 +305,12 @@ export async function GET(req: NextRequest) {
       console.log(`[sheets API] L1キャッシュ更新: ${deduped.length}名`);
 
       // L2（Google Sheets）への書き込み
-      await writeL2Cache(sheets, deduped, tempActiveMonths, tempLoadedMonths);
+      try {
+        await writeL2Cache(sheets, deduped, tempActiveMonths, tempLoadedMonths);
+      } catch (e) {
+        l2Error = e instanceof Error ? e.message : String(e);
+        console.error("[sheets API] L2キャッシュ書き込みエラー:", l2Error);
+      }
 
     } catch (sheetErr) {
       // 稼働一覧へのアクセス権がないユーザー → キャッシュを使う
@@ -384,7 +392,12 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    return NextResponse.json({ engineers, loadedMonths, fromCache });
+    return NextResponse.json({
+      engineers,
+      loadedMonths,
+      fromCache,
+      _debug: { ledgerSheetId: LEDGER_SHEET_ID, l2Error },
+    });
   } catch (e: unknown) {
     console.error("[sheets API]", e);
     return NextResponse.json({ error: "稼働一覧の取得に失敗しました" }, { status: 500 });
