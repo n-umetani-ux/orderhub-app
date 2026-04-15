@@ -18,5 +18,9 @@ export const googleProvider = new GoogleAuthProvider();
 googleProvider.addScope("https://www.googleapis.com/auth/spreadsheets");
 googleProvider.addScope("https://www.googleapis.com/auth/drive");
 
+// スコープ変更時に既存ユーザーにも同意画面を再表示させる
+// （以前 drive.file → drive に変更したため、再ログインだけでは新スコープが付与されない）
+googleProvider.setCustomParameters({ prompt: "consent" });
+
 // 社内ドメイン制限
 export const ALLOWED_DOMAIN = process.env.NEXT_PUBLIC_ALLOWED_DOMAIN || "example.com";
