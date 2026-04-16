@@ -14,7 +14,7 @@ async function getDriveFolderId(sheets: ReturnType<typeof google.sheets>): Promi
     });
     const rows = (res.data.values ?? []) as string[][];
     for (const row of rows) {
-      if (row[0] === "driveFolderId" && row[1]) return row[1];
+      if (row[0] === "driveFolderId" && row[1]) return row[1].trim();
     }
   } catch {
     // 設定シートが無い場合は無視
@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
     const sheets = google.sheets({ version: "v4", auth: oauth2 });
     const drive = google.drive({ version: "v3", auth: oauth2 });
 
-    const folderId = await getDriveFolderId(sheets);
+    const folderId = (await getDriveFolderId(sheets)).trim();
     if (!folderId) {
       return NextResponse.json({ error: "GOOGLE_DRIVE_FOLDER_ID が未設定です" }, { status: 500 });
     }
