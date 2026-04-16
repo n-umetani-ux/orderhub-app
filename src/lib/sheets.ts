@@ -13,6 +13,8 @@ const SECTION_MARKERS = [
   "ENG_BP",
 ];
 const STANDBY_SECTION = "待機一覧";
+// 対象外セクション（ダッシュボードから除外）
+const EXCLUDED_SECTIONS = ["ENGチーム", "ENG_BP"];
 const HEADER_PATTERNS = ["manNo.", "No.", "PJcode"];
 
 type Loc = "東京" | "大阪" | "福岡";
@@ -41,6 +43,7 @@ export const SENSITIVE_COLS = new Set([8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
 export function parseRows(rows: string[][], loc: Loc): SheetsEngineer[] {
   const result: SheetsEngineer[] = [];
   let inStandby = false;
+  let inExcluded = false;
   let headerRowIdx = -1;
 
   for (let i = 0; i < rows.length; i++) {
@@ -49,6 +52,7 @@ export function parseRows(rows: string[][], loc: Loc): SheetsEngineer[] {
     // セクション検出
     if (SECTION_MARKERS.some(m => rowA.includes(m))) {
       inStandby = rowA.includes(STANDBY_SECTION);
+      inExcluded = EXCLUDED_SECTIONS.some(s => rowA.includes(s));
       headerRowIdx = -1;
       continue;
     }
@@ -59,8 +63,8 @@ export function parseRows(rows: string[][], loc: Loc): SheetsEngineer[] {
       continue;
     }
 
-    // 待機一覧は除外
-    if (inStandby) continue;
+    // 待機一覧・対象外セクションは除外
+    if (inStandby || inExcluded) continue;
 
     // ヘッダー未検出はスキップ
     if (headerRowIdx === -1) continue;

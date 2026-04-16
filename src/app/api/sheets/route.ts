@@ -7,6 +7,8 @@ const LEDGER_SHEET_ID = getOrderLedgerSheetId();
 
 const SECTION_MARKERS = ["待機一覧", "正社員エンジニア一覧", "個人事業主エンジニア一覧", "パートナーエンジニア一覧", "ENGチーム", "ENG_BP"];
 const STANDBY_SECTION = "待機一覧";
+// 対象外セクション（ダッシュボードから除外）
+const EXCLUDED_SECTIONS = ["ENGチーム", "ENG_BP"];
 const HEADER_PATTERNS = ["manNo.", "No.", "PJcode"];
 
 /* ────────────────────────────────────────────
@@ -182,6 +184,7 @@ const COL = { manNo: 0, kubun: 1, name: 2, activity: 3, ending: 4, customer: 5, 
 function parseRows(rows: string[][], loc: Loc) {
   const result = [];
   let inStandby = false;
+  let inExcluded = false;
   let headerFound = false;
 
   for (const row of rows) {
@@ -189,6 +192,7 @@ function parseRows(rows: string[][], loc: Loc) {
 
     if (SECTION_MARKERS.some(m => rowA.includes(m))) {
       inStandby = rowA.includes(STANDBY_SECTION);
+      inExcluded = EXCLUDED_SECTIONS.some(s => rowA.includes(s));
       headerFound = false;
       continue;
     }
@@ -196,7 +200,7 @@ function parseRows(rows: string[][], loc: Loc) {
       headerFound = true;
       continue;
     }
-    if (inStandby || !headerFound) continue;
+    if (inStandby || inExcluded || !headerFound) continue;
 
     const manNo = row[COL.manNo]?.trim();
     if (!manNo || !/^\d{6}$/.test(manNo)) continue;
