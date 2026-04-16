@@ -22,6 +22,32 @@ async function getDriveFolderId(sheets: ReturnType<typeof google.sheets>): Promi
   return DEFAULT_DRIVE_FOLDER_ID;
 }
 
+/** トークンのスコープを確認 */
+async function getTokenScopes(token: string): Promise<string> {
+  try {
+    const res = await fetch(`https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${token}`);
+    const data = await res.json();
+    return data.scope ?? "scope不明";
+  } catch {
+    return "tokeninfo取得失敗";
+  }
+}
+
+/** フォルダのメタデータを取得して存在確認 */
+async function checkFolderAccess(drive: ReturnType<typeof google.drive>, folderId: string): Promise<{ ok: boolean; detail: string }> {
+  try {
+    const res = await drive.files.get({
+      fileId: folderId,
+      fields: "id, name, mimeType, driveId, capabilities",
+      supportsAllDrives: true,
+    });
+    return { ok: true, detail: JSON.stringify({ name: res.data.name, mimeType: res.data.mimeType, driveId: res.data.driveId }) };
+  } catch (e: unknown) {
+    const gErr = e as { response?: { status?: number; data?: unknown } };
+    return { ok: false, detail: `status=${gErr?.response?.status} data=${JSON.stringify(gErr?.response?.data)}` };
+  }
+}
+
 export async function POST(req: NextRequest) {
   const accessToken = req.headers.get("x-google-access-token");
   if (!accessToken) {
@@ -45,6 +71,20 @@ export async function POST(req: NextRequest) {
     const folderId = await getDriveFolderId(sheets);
     if (!folderId) {
       return NextResponse.json({ error: "GOOGLE_DRIVE_FOLDER_ID が未設定です" }, { status: 500 });
+    }
+
+    // デバッグ: トークンスコープとフォルダアクセスを事前チェック
+    const [scopes, folderCheck] = await Promise.all([
+      getTokenScopes(accessToken),
+      checkFolderAccess(drive, folderId),
+    ]);
+    console.log("[drive debug]", { scopes, folderId, folderCheck });
+
+    if (!folderCheck.ok) {
+      return NextResponse.json({
+        error: `フォルダにアクセスできません`,
+        _debug: { scopes, folderId, folderCheck: folderCheck.detail },
+      }, { status: 403 });
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
