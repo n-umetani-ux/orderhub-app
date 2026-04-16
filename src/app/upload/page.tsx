@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef, useCallback, useEffect } from "react";
+import React, { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { Engineer, SheetsEngineer, DEPTS } from "@/types";
 import { useAuth } from "@/lib/auth-context";
 import { loadCache } from "@/lib/sheets-cache";
@@ -25,6 +25,96 @@ interface PdfEntry {
   extractedIssue: string;
   nameMatches: SheetsEngineer[];
   autoSelected: SheetsEngineer | null;
+}
+
+/** ISO日付 (YYYY-MM-DD) を複数表記に変換
+ *  "2026-04-01" → ["2026年4月1日","2026年04月01日","2026/4/1","2026/04/01","2026-04-01"] */
+function dateVariants(iso: string): string[] {
+  if (!iso) return [];
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return [];
+  const [, y, mm, dd] = m;
+  const mInt = parseInt(mm, 10);
+  const dInt = parseInt(dd, 10);
+  return [
+    `${y}年${mInt}月${dInt}日`,
+    `${y}年${mm}月${dd}日`,
+    `${y}/${mInt}/${dInt}`,
+    `${y}/${mm}/${dd}`,
+    `${y}-${mm}-${dd}`,
+  ];
+}
+
+/** 抽出テキスト内で指定値を色分け表示 */
+function renderHighlightedText(
+  text: string,
+  engineerName: string | undefined,
+  customer: string | undefined,
+  startDate: string,
+  endDate: string,
+  issueDate: string,
+): React.ReactNode {
+  // [パターン文字列, 色クラス] のリスト
+  type Hit = { start: number; end: number; bg: string; border: string };
+  const hits: Hit[] = [];
+
+  const pushMatches = (needle: string, bg: string, border: string) => {
+    if (!needle || needle.length < 2) return;
+    let idx = 0;
+    while ((idx = text.indexOf(needle, idx)) !== -1) {
+      hits.push({ start: idx, end: idx + needle.length, bg, border });
+      idx += needle.length;
+    }
+  };
+
+  // 対象者（氏名）: 黄
+  if (engineerName) {
+    pushMatches(engineerName, "#fef3c7", "#f59e0b");
+    // 姓のみ（最初の空白または2〜3文字）でもヒット
+    const noSpace = engineerName.replace(/[\s\u3000]/g, "");
+    if (noSpace !== engineerName) pushMatches(noSpace, "#fef3c7", "#f59e0b");
+  }
+  // 顧客: 緑
+  if (customer) pushMatches(customer, "#dcfce7", "#16a34a");
+  // 契約期間: 青
+  dateVariants(startDate).forEach(v => pushMatches(v, "#dbeafe", "#2563eb"));
+  dateVariants(endDate).forEach(v => pushMatches(v, "#dbeafe", "#2563eb"));
+  // 発注日: 紫
+  dateVariants(issueDate).forEach(v => pushMatches(v, "#ede9fe", "#7c3aed"));
+
+  if (hits.length === 0) return text;
+
+  // 重複/重なる区間を整理（先勝ち）
+  hits.sort((a, b) => a.start - b.start || b.end - a.end);
+  const merged: Hit[] = [];
+  for (const h of hits) {
+    const last = merged[merged.length - 1];
+    if (!last || h.start >= last.end) merged.push(h);
+  }
+
+  // 分割レンダリング
+  const out: React.ReactNode[] = [];
+  let pos = 0;
+  merged.forEach((h, i) => {
+    if (h.start > pos) out.push(text.slice(pos, h.start));
+    out.push(
+      <mark
+        key={i}
+        style={{
+          backgroundColor: h.bg,
+          border: `1px solid ${h.border}`,
+          borderRadius: 3,
+          padding: "0 2px",
+          color: "#111827",
+        }}
+      >
+        {text.slice(h.start, h.end)}
+      </mark>,
+    );
+    pos = h.end;
+  });
+  if (pos < text.length) out.push(text.slice(pos));
+  return out;
 }
 
 /** 命名規約: YYMMDD_部署コード_顧客コード顧客略称_社員番号.pdf
@@ -704,8 +794,21 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                 <summary className="text-xs text-slate-600 cursor-pointer select-none">
                   抽出テキスト確認（診断用）— {activeEntry.rawText.length}字 — {activeEntry.file.name}
                 </summary>
+                <div className="mt-1 flex items-center gap-3 text-[10px] mb-1">
+                  <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: "#fef3c7", border: "1px solid #f59e0b" }} />対象者</span>
+                  <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: "#dcfce7", border: "1px solid #16a34a" }} />顧客</span>
+                  <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: "#dbeafe", border: "1px solid #2563eb" }} />契約期間</span>
+                  <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: "#ede9fe", border: "1px solid #7c3aed" }} />発注日</span>
+                </div>
                 <pre className="mt-1 rounded-lg p-3 text-[11px] whitespace-pre-wrap break-all leading-relaxed max-h-64 overflow-auto" style={{ backgroundColor: "#f8fafc", color: "#1e293b" }}>
-                  {activeEntry.rawText}
+                  {renderHighlightedText(
+                    activeEntry.rawText,
+                    selected ? (selected as { name?: string }).name : undefined,
+                    (selected as { customer?: string } | null)?.customer ?? multiCustomerName,
+                    startDate,
+                    endDate,
+                    issueDate,
+                  )}
                 </pre>
               </details>
             )}

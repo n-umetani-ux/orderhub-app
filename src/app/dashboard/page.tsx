@@ -543,7 +543,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
                             key={ym}
                             className={`text-center py-2 relative ${isAdmin ? "cursor-pointer" : ""} ${i === 0 ? "border-l-2 border-l-blue-300" : ""}`}
                             style={{
-                              backgroundColor: isEnding || status === "na" ? "#f8fafc" :
+                              backgroundColor: status === "na" ? "#f8fafc" :
                                 status === "covered" ? "#f0fdf4" :
                                 status === "gap" ? "#fef2f2" : "#f8fafc",
                             }}
@@ -552,7 +552,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
                               setOverrideMenu({ manNo: e.manNo, ym, x: ev.clientX, y: ev.clientY });
                             }) : undefined}
                           >
-                            {isEnding || status === "na" ? (
+                            {status === "na" ? (
                               <span style={{ color: "#cbd5e1", fontSize: "11px" }}>—</span>
                             ) : status === "covered" ? (
                               <span style={{ color: "#16a34a", fontSize: "13px", fontWeight: 700 }}>○</span>
