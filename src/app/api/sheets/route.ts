@@ -251,6 +251,7 @@ export async function GET(req: NextRequest) {
     let fromCache = false;
     let l2Error: string | null = null;
 
+    const sheetReadErrors: { label: string; id: string; error: string }[] = [];
     try {
       // 稼働一覧スプレッドシートを読み込み
       const activeSheets = getActiveSheetIds();
@@ -285,7 +286,13 @@ export async function GET(req: NextRequest) {
           tempLoadedMonths.push(yearMonth);
           console.log(`[sheets API] ${label}シート読み込み完了`);
         } catch (err) {
-          console.warn(`[sheets API] ${label}シート読み込み失敗（未作成の可能性）:`, err);
+          const errMsg = err instanceof Error ? err.message : String(err);
+          const gErr = err as { response?: { status?: number; data?: { error?: { message?: string } } } };
+          const apiStatus = gErr?.response?.status;
+          const apiMsg = gErr?.response?.data?.error?.message;
+          const full = apiStatus ? `status=${apiStatus} ${apiMsg ?? errMsg}` : errMsg;
+          console.warn(`[sheets API] ${label}シート読み込み失敗:`, full);
+          sheetReadErrors.push({ label, id: spreadsheetId, error: full });
         }
       }
 
@@ -334,7 +341,15 @@ export async function GET(req: NextRequest) {
 
       if (!cached) {
         return NextResponse.json(
-          { error: "稼働データのキャッシュがありません。管理者が先にダッシュボードを開いてください。", needAdminLoad: true },
+          {
+            error: "稼働データのキャッシュがありません。管理者が先にダッシュボードを開いてください。",
+            needAdminLoad: true,
+            _debug: {
+              sheetReadErrors,
+              ledgerSheetId: LEDGER_SHEET_ID,
+              fallbackReason: sheetErr instanceof Error ? sheetErr.message : String(sheetErr),
+            },
+          },
           { status: 503 },
         );
       }
@@ -400,7 +415,7 @@ export async function GET(req: NextRequest) {
       engineers,
       loadedMonths,
       fromCache,
-      _debug: { ledgerSheetId: LEDGER_SHEET_ID, l2Error },
+      _debug: { ledgerSheetId: LEDGER_SHEET_ID, l2Error, sheetReadErrors },
     });
   } catch (e: unknown) {
     console.error("[sheets API]", e);
