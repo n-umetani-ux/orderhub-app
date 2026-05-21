@@ -260,12 +260,14 @@ export async function GET(req: NextRequest) {
       const tempActiveMonths = new Map<string, Set<string>>();
       const raw: ParsedEngineer[] = [];
 
-      for (const { id: spreadsheetId, label, yearMonth } of activeSheets) {
-        try {
+      // 各月のシートを並列読み込み（1月失敗しても他の月は継続）
+      const monthResults = await Promise.allSettled(
+        activeSheets.map(async ({ id: spreadsheetId, label, yearMonth }) => {
           const meta = await sheets.spreadsheets.get({ spreadsheetId });
           const sheetNames = meta.data.sheets?.map(s => s.properties?.title ?? "") ?? [];
           const targetSheets = sheetNames.filter(n => n in SHEET_LOCS);
 
+          const monthRaw: ParsedEngineer[] = [];
           for (const sheetName of targetSheets) {
             const loc = SHEET_LOCS[sheetName];
             const res = await sheets.spreadsheets.values.get({
@@ -276,16 +278,26 @@ export async function GET(req: NextRequest) {
             const sanitized = rows.map(row =>
               row.map((cell, idx) => (SENSITIVE_COLS.has(idx) ? "" : cell))
             );
-            const parsed = parseRows(sanitized, loc);
-            for (const eng of parsed) {
-              if (!tempActiveMonths.has(eng.manNo)) tempActiveMonths.set(eng.manNo, new Set());
-              tempActiveMonths.get(eng.manNo)!.add(yearMonth);
-            }
-            raw.push(...parsed);
+            monthRaw.push(...parseRows(sanitized, loc));
           }
-          tempLoadedMonths.push(yearMonth);
           console.log(`[sheets API] ${label}シート読み込み完了`);
-        } catch (err) {
+          return { yearMonth, engineers: monthRaw };
+        })
+      );
+
+      // 結果を集約（成功月はデータ追加、失敗月はエラー記録）
+      for (let i = 0; i < monthResults.length; i++) {
+        const { label, id: spreadsheetId, yearMonth } = activeSheets[i];
+        const result = monthResults[i];
+        if (result.status === "fulfilled") {
+          for (const eng of result.value.engineers) {
+            if (!tempActiveMonths.has(eng.manNo)) tempActiveMonths.set(eng.manNo, new Set());
+            tempActiveMonths.get(eng.manNo)!.add(yearMonth);
+          }
+          raw.push(...result.value.engineers);
+          tempLoadedMonths.push(yearMonth);
+        } else {
+          const err = result.reason;
           const errMsg = err instanceof Error ? err.message : String(err);
           const gErr = err as { response?: { status?: number; data?: { error?: { message?: string } } } };
           const apiStatus = gErr?.response?.status;

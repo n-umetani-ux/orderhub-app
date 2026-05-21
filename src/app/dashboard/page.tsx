@@ -8,6 +8,7 @@ import { loadCache, saveCache, formatCachedAt } from "@/lib/sheets-cache";
 const LOCS = ["全拠点", "東京", "大阪", "福岡"] as const;
 
 const AUTO_REFRESH_MS = 5 * 60 * 1000;
+const MIN_MONTH = "2026-04"; // 管理開始月（これより前の月は表示しない）
 
 /** 注文書レコード */
 interface OrderRecord {
@@ -49,6 +50,26 @@ function orderCoversMonth(order: OrderRecord, ym: string): boolean {
   const contractEnd = new Date(order.contractEnd);
   // 契約期間と月が重なるかチェック
   return contractStart <= monthEnd && contractEnd >= monthStart;
+}
+
+/** 現在月キー（YYYY-MM）を JST で返す */
+function getCurrentMonthKey(): string {
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+  });
+  const parts = fmt.formatToParts(new Date());
+  const y = parts.find(p => p.type === 'year')?.value;
+  const m = parts.find(p => p.type === 'month')?.value;
+  return `${y}-${m}`;
+}
+
+/** 翌月キー */
+function getNextMonth(ym: string): string {
+  const [y, m] = ym.split("-").map(Number);
+  const d = new Date(y, m, 1); // Date の月は0始まりなので m がそのまま翌月
+  return monthKey(d.getFullYear(), d.getMonth() + 1);
 }
 
 interface DashboardPageProps {
@@ -183,36 +204,26 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
     return map;
   }, [orders]);
 
-  // カレンダー月の算出: 当月〜全員カバー月+1ヶ月 (最大12ヶ月)
-  const calendarMonths = useMemo(() => {
-    const maxMonths = 12;
-    const allMonths = generateMonths(maxMonths);
+  // 計算対象月: 2026-04以降の過去月 + 現在月 + 5ヶ月先（計6ヶ月）
+  const allCandidateMonths = useMemo(() => {
+    const currentM = getCurrentMonthKey();
+    const pastLoaded = loadedMonths
+      .filter(m => m < currentM && m >= MIN_MONTH)
+      .sort();
+    const future = generateMonths(6); // 現在月 + 5ヶ月先
+    return [...new Set([...pastLoaded, ...future])].filter(m => m >= MIN_MONTH).sort();
+  }, [loadedMonths]);
 
-    // 全員がカバーされている最初の月を見つけてそこで切る
-    let lastNeededIdx = 0;
-    for (let i = 0; i < allMonths.length; i++) {
-      const ym = allMonths[i];
-      const hasGap = filtered.some(e => {
-        const engOrders = ordersByManNo[String(e.manNo)] ?? [];
-        return !engOrders.some(o => orderCoversMonth(o, ym));
-      });
-      if (hasGap) lastNeededIdx = i;
-    }
-    // ギャップがある月+1ヶ月を表示（最低3ヶ月は表示）
-    const showCount = Math.max(3, Math.min(lastNeededIdx + 2, maxMonths));
-    return allMonths.slice(0, showCount);
-  }, [filtered, ordersByManNo]);
-
-  // 各エンジニアの月別カバレッジ計算
+  // 各エンジニアの月別カバレッジ計算（全候補月分）
   // "covered" = 注文書あり, "gap" = 稼働中だが注文書なし, "na" = その月は稼働対象外
-  const coverageMap = useMemo(() => {
+  const fullCoverageMap = useMemo(() => {
     const map: Record<number, Record<string, "covered" | "gap" | "na">> = {};
     filtered.forEach(e => {
       const engOrders = ordersByManNo[String(e.manNo)] ?? [];
       const activeMonths = e.activeMonths ?? [];
       const engOverrides = overrides[String(e.manNo)] ?? {};
       const months: Record<string, "covered" | "gap" | "na"> = {};
-      calendarMonths.forEach(ym => {
+      allCandidateMonths.forEach(ym => {
         // 手動オーバーライドがあれば優先
         if (engOverrides[ym]) {
           months[ym] = engOverrides[ym];
@@ -229,13 +240,55 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
       map[e.manNo] = months;
     });
     return map;
-  }, [filtered, ordersByManNo, calendarMonths, overrides]);
+  }, [filtered, ordersByManNo, allCandidateMonths, overrides]);
 
-  // サマリー統計
+  // 月別アラート件数（🔴ギャップ + 🟡期限迫る + 🟠当月終了 の合計）
+  const monthAlertCounts = useMemo(() => {
+    const currentM = getCurrentMonthKey();
+    const result: Record<string, number> = {};
+    for (const ym of allCandidateMonths) {
+      const ymNext = getNextMonth(ym);
+      let alertCount = 0;
+      filtered.forEach(e => {
+        const cov = fullCoverageMap[e.manNo]?.[ym];
+        // 🔴 ギャップ発生
+        if (cov === "gap") alertCount++;
+        // 🟡 期限迫る（この月はカバー済み、次月はギャップ、かつ次月も稼働対象）
+        if (cov === "covered") {
+          const nextCov = fullCoverageMap[e.manNo]?.[ymNext];
+          const activeMonths = e.activeMonths ?? [];
+          const isActiveNextMonth = activeMonths.length === 0 || activeMonths.includes(ymNext);
+          if (nextCov === "gap" && isActiveNextMonth) alertCount++;
+        }
+        // 🟠 当月終了（スプレッドシートの終了フラグは現在月のみ有効）
+        if (ym === currentM && e.ending === 1) alertCount++;
+      });
+      result[ym] = alertCount;
+    }
+    return result;
+  }, [filtered, fullCoverageMap, allCandidateMonths]);
+
+  // 表示月: アラート1件以上の月 + 現在月は常に表示
+  const calendarMonths = useMemo(() => {
+    const currentM = getCurrentMonthKey();
+    return allCandidateMonths.filter(ym =>
+      ym === currentM || (monthAlertCounts[ym] ?? 0) > 0
+    );
+  }, [allCandidateMonths, monthAlertCounts]);
+
+  // クローズ済月数: 対象範囲内でアラート0件かつ現在月でない月の数
+  const closedMonthCount = useMemo(() => {
+    const currentM = getCurrentMonthKey();
+    return allCandidateMonths.filter(ym =>
+      ym !== currentM && (monthAlertCounts[ym] ?? 0) === 0
+    ).length;
+  }, [allCandidateMonths, monthAlertCounts]);
+
+  // サマリー統計（当月基準で固定計算）
   const counts = useMemo(() => {
     const active = engineers.filter(e => e.status !== "archived");
-    // 当月のギャップ数
-    const currentMonth = calendarMonths[0];
+    const currentMonth = getCurrentMonthKey();
+    const nextMonth = getNextMonth(currentMonth);
     let gapCount = 0;
     let expiringCount = 0;
     let normalCount = 0;
@@ -244,16 +297,15 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
       const engOrders = ordersByManNo[String(e.manNo)] ?? [];
       const activeMonths = e.activeMonths ?? [];
       // 当月に稼働対象かチェック
-      const isActiveThisMonth = activeMonths.length === 0 || (currentMonth && activeMonths.includes(currentMonth));
-      if (!isActiveThisMonth) return; // 当月稼働対象外はカウントしない
+      const isActiveThisMonth = activeMonths.length === 0 || activeMonths.includes(currentMonth);
+      if (!isActiveThisMonth) return;
 
-      const coveredThisMonth = currentMonth && engOrders.some(o => orderCoversMonth(o, currentMonth));
+      const coveredThisMonth = engOrders.some(o => orderCoversMonth(o, currentMonth));
       if (!coveredThisMonth) {
         gapCount++;
       } else {
-        const nextMonth = calendarMonths[1];
-        const isActiveNextMonth = activeMonths.length === 0 || (nextMonth && activeMonths.includes(nextMonth));
-        const coveredNextMonth = nextMonth && isActiveNextMonth && engOrders.some(o => orderCoversMonth(o, nextMonth));
+        const isActiveNextMonth = activeMonths.length === 0 || activeMonths.includes(nextMonth);
+        const coveredNextMonth = isActiveNextMonth && engOrders.some(o => orderCoversMonth(o, nextMonth));
         if (!coveredNextMonth && isActiveNextMonth) {
           expiringCount++;
         } else {
@@ -269,7 +321,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
       normal: normalCount,
       archived: engineers.filter(e => e.status === "archived").length,
     };
-  }, [engineers, ordersByManNo, calendarMonths]);
+  }, [engineers, ordersByManNo]);
 
   const prevGapRef = useRef(-1);
   useEffect(() => {
@@ -282,11 +334,11 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
   // ソート: ギャップが多い人を上に
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
-      const aGaps = calendarMonths.filter(ym => coverageMap[a.manNo]?.[ym] === "gap").length;
-      const bGaps = calendarMonths.filter(ym => coverageMap[b.manNo]?.[ym] === "gap").length;
+      const aGaps = calendarMonths.filter(ym => fullCoverageMap[a.manNo]?.[ym] === "gap").length;
+      const bGaps = calendarMonths.filter(ym => fullCoverageMap[b.manNo]?.[ym] === "gap").length;
       return bGaps - aGaps; // ギャップが多い順
     });
-  }, [filtered, calendarMonths, coverageMap]);
+  }, [filtered, calendarMonths, fullCoverageMap]);
 
   // オーバーライドセルの右クリックメニューを閉じる
   useEffect(() => {
@@ -385,18 +437,19 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
       ) : (
         <>
           {/* サマリーカード */}
-          <div className="grid grid-cols-4 gap-3.5 mb-5">
+          <div className="grid grid-cols-5 gap-3.5 mb-5">
             {[
-              { label: "当月ギャップ", val: counts.gap, color: "#dc2626", bg: "#fef2f2", border: "#fecaca", icon: "🚨" },
-              { label: "来月切れ", val: counts.expiring, color: "#d97706", bg: "#fffbeb", border: "#fde68a", icon: "⏰" },
-              { label: "正常カバー", val: counts.normal, color: "#059669", bg: "#ecfdf5", border: "#a7f3d0", icon: "✓" },
-              { label: "監視中", val: counts.total, color: "#3b82f6", bg: "#eff6ff", border: "#bfdbfe", icon: "👥" },
+              { label: "当月ギャップ", val: counts.gap, color: "#dc2626", bg: "#fef2f2", border: "#fecaca", icon: "🚨", unit: "件" },
+              { label: "来月切れ", val: counts.expiring, color: "#d97706", bg: "#fffbeb", border: "#fde68a", icon: "⏰", unit: "件" },
+              { label: "正常カバー", val: counts.normal, color: "#059669", bg: "#ecfdf5", border: "#a7f3d0", icon: "✓", unit: "件" },
+              { label: "監視中", val: counts.total, color: "#3b82f6", bg: "#eff6ff", border: "#bfdbfe", icon: "👥", unit: "件" },
+              { label: "クローズ済", val: closedMonthCount, color: "#16a34a", bg: "#f0fdf4", border: "#86efac", icon: "✅", unit: "月" },
             ].map(m => (
               <div key={m.label} className="relative overflow-hidden rounded-xl p-4" style={{ background: m.bg, border: `1.5px solid ${m.border}` }}>
                 <p className="text-xs font-medium mb-1" style={{ color: m.color }}>{m.label}</p>
                 <div className="flex items-baseline gap-1">
                   <span className="text-3xl font-black leading-none" style={{ color: m.color }}>{m.val}</span>
-                  <span className="text-sm opacity-70" style={{ color: m.color }}>件</span>
+                  <span className="text-sm opacity-70" style={{ color: m.color }}>{m.unit}</span>
                 </div>
                 <span className="absolute right-3 top-3 text-2xl opacity-40">{m.icon}</span>
               </div>
@@ -506,7 +559,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
                   </tr>
                 )}
                 {sorted.map(e => {
-                  const coverage = coverageMap[e.manNo] ?? {};
+                  const coverage = fullCoverageMap[e.manNo] ?? {};
                   const hasAnyGap = calendarMonths.some(ym => coverage[ym] === "gap");
                   const isEnding = e.ending === 1;
 

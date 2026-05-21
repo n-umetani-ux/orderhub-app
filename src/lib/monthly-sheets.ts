@@ -2,10 +2,10 @@
  * 月別の稼働一覧スプレッドシートID管理
  *
  * 毎月の稼働一覧は別々のスプレッドシートに作成される。
- * 常に「当月 + 翌月」の2つを同時に参照し、データを結合する。
+ * MIN_MONTH(管理開始月) から「当月 + 翌月」までの全月を同時に参照する。
  *
- * 例: 4月 → 4月シート + 5月シート を両方読む
- *     5月 → 5月シート + 6月シート を両方読む
+ * 例: 現在が2026-05 → ["2026-04", "2026-05", "2026-06"] を読む
+ *     現在が2026-08 → ["2026-04"〜"2026-09"] を読む
  *
  * 新しい月のスプレッドシートが作られたら、ここにIDを1行追加する。
  */
@@ -22,30 +22,47 @@ const DEFAULT_SHEET_ID = process.env.GOOGLE_SHEETS_ID ?? "";
 // 注文書管理システム専用スプレッドシート（全営業メンバーがアクセス可能）
 const ORDER_LEDGER_ID = process.env.ORDER_LEDGER_SHEET_ID ?? DEFAULT_SHEET_ID;
 
+/** 管理開始月（これより前の月は参照しない） */
+const MIN_MONTH = "2026-04";
+
 /**
  * 現在参照すべき稼働一覧スプレッドシートIDの一覧を返す
- * 当月 + 翌月の最大2つ（存在するもののみ）
+ * MIN_MONTH から当月 + 翌月までの全月（MONTHLY_SHEET_IDS に登録済みのもののみ）
  */
 export function getActiveSheetIds(): { id: string; label: string; yearMonth: string }[] {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth() + 1; // 1-based
+  // JST で当月キーを取得
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+  });
+  const parts = fmt.formatToParts(new Date());
+  const y = parts.find(p => p.type === "year")?.value ?? "";
+  const mo = parts.find(p => p.type === "month")?.value ?? "";
+  const currentKey = `${y}-${mo}`;
 
-  const currentKey = `${year}-${String(month).padStart(2, "0")}`;
-  const nextMonth = month === 12 ? 1 : month + 1;
-  const nextYear = month === 12 ? year + 1 : year;
-  const nextKey = `${nextYear}-${String(nextMonth).padStart(2, "0")}`;
+  // 翌月キー（parseInt(mo) は 1-based なので Date の 0-based month 引数として使うと +1 になる）
+  const nextDate = new Date(parseInt(y), parseInt(mo), 1);
+  const nextKey = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, "0")}`;
 
   const result: { id: string; label: string; yearMonth: string }[] = [];
 
-  if (MONTHLY_SHEET_IDS[currentKey]) {
-    result.push({ id: MONTHLY_SHEET_IDS[currentKey], label: `${month}月`, yearMonth: currentKey });
-  } else if (DEFAULT_SHEET_ID) {
-    result.push({ id: DEFAULT_SHEET_ID, label: `${month}月`, yearMonth: currentKey });
-  }
+  // MIN_MONTH から翌月まですべての月を走査
+  let cursor = MIN_MONTH;
+  while (cursor <= nextKey) {
+    const [cy, cm] = cursor.split("-").map(Number);
+    const label = `${cm}月`;
 
-  if (MONTHLY_SHEET_IDS[nextKey]) {
-    result.push({ id: MONTHLY_SHEET_IDS[nextKey], label: `${nextMonth}月`, yearMonth: nextKey });
+    if (MONTHLY_SHEET_IDS[cursor]) {
+      result.push({ id: MONTHLY_SHEET_IDS[cursor], label, yearMonth: cursor });
+    } else if (cursor === currentKey && DEFAULT_SHEET_ID) {
+      // 当月のみ環境変数フォールバック
+      result.push({ id: DEFAULT_SHEET_ID, label, yearMonth: cursor });
+    }
+
+    // 翌月へ進む
+    const next = new Date(cy, cm, 1);
+    cursor = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
   }
 
   if (result.length === 0) {
