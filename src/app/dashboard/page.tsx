@@ -8,7 +8,6 @@ import { loadCache, saveCache, formatCachedAt } from "@/lib/sheets-cache";
 const LOCS = ["全拠点", "東京", "大阪", "福岡"] as const;
 
 const AUTO_REFRESH_MS = 5 * 60 * 1000;
-const MIN_MONTH = "2026-04"; // 管理開始月（これより前の月は表示しない）
 
 /** 注文書レコード */
 interface OrderRecord {
@@ -29,15 +28,34 @@ function monthLabel(key: string): string {
   return `${m}月`;
 }
 
-/** 当月から N ヶ月先までの月キー配列 */
-function generateMonths(count: number): string[] {
-  const now = new Date();
+/** JSTで現在の年度開始年を返す（4月〜翌3月が1年度） */
+function getCurrentFiscalYear(): number {
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+  });
+  const parts = fmt.formatToParts(new Date());
+  const year = parseInt(parts.find(p => p.type === 'year')?.value ?? '0', 10);
+  const month = parseInt(parts.find(p => p.type === 'month')?.value ?? '0', 10);
+  return month >= 4 ? year : year - 1;
+}
+
+/** 指定した年度（fiscalYear=年度開始年）の4月〜翌3月の12ヶ月を返す */
+function getFiscalYearMonthsForYear(fiscalYear: number): string[] {
   const result: string[] = [];
-  for (let i = 0; i < count; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
-    result.push(monthKey(d.getFullYear(), d.getMonth() + 1));
+  for (let i = 0; i < 12; i++) {
+    const absMonth = 4 + i; // 4月〜15月（翌年3月）
+    const y = fiscalYear + Math.floor((absMonth - 1) / 12);
+    const mo = ((absMonth - 1) % 12) + 1;
+    result.push(monthKey(y, mo));
   }
   return result;
+}
+
+/** 現在の年度（4月〜翌3月）の12ヶ月を JST で返す */
+function getFiscalYearMonths(): string[] {
+  return getFiscalYearMonthsForYear(getCurrentFiscalYear());
 }
 
 /** 注文書が特定の月をカバーしているかチェック */
@@ -93,6 +111,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
   const [search, setSearch] = useState("");
   const [overrideMenu, setOverrideMenu] = useState<{ manNo: number; ym: string; x: number; y: number } | null>(null);
   const [savingOverride, setSavingOverride] = useState(false);
+  const [selectedFiscalYear, setSelectedFiscalYear] = useState<number>(() => getCurrentFiscalYear());
 
   const currentTantou = useMemo(() => {
     const email = user?.email ?? "";
@@ -204,15 +223,19 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
     return map;
   }, [orders]);
 
-  // 計算対象月: 2026-04以降の過去月 + 現在月 + 5ヶ月先（計6ヶ月）
+  // 年度選択肢: 現在年度 + 翌年度の2つ
+  const fiscalYearOptions = useMemo(() => {
+    const currentFY = getCurrentFiscalYear();
+    return [currentFY, currentFY + 1].map(fy => ({
+      year: fy,
+      label: `${fy}年度（${fy}/4〜${fy + 1}/3）`,
+    }));
+  }, []);
+
+  // 表示月: 選択中の年度の4月〜翌3月の12ヶ月
   const allCandidateMonths = useMemo(() => {
-    const currentM = getCurrentMonthKey();
-    const pastLoaded = loadedMonths
-      .filter(m => m < currentM && m >= MIN_MONTH)
-      .sort();
-    const future = generateMonths(6); // 現在月 + 5ヶ月先
-    return [...new Set([...pastLoaded, ...future])].filter(m => m >= MIN_MONTH).sort();
-  }, [loadedMonths]);
+    return getFiscalYearMonthsForYear(selectedFiscalYear);
+  }, [selectedFiscalYear]);
 
   // 各エンジニアの月別カバレッジ計算（全候補月分）
   // "covered" = 注文書あり, "gap" = 稼働中だが注文書なし, "na" = その月は稼働対象外
@@ -242,47 +265,10 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
     return map;
   }, [filtered, ordersByManNo, allCandidateMonths, overrides]);
 
-  // 月別アラート件数（🔴ギャップ + 🟡期限迫る + 🟠当月終了 の合計）
-  const monthAlertCounts = useMemo(() => {
-    const currentM = getCurrentMonthKey();
-    const result: Record<string, number> = {};
-    for (const ym of allCandidateMonths) {
-      const ymNext = getNextMonth(ym);
-      let alertCount = 0;
-      filtered.forEach(e => {
-        const cov = fullCoverageMap[e.manNo]?.[ym];
-        // 🔴 ギャップ発生
-        if (cov === "gap") alertCount++;
-        // 🟡 期限迫る（この月はカバー済み、次月はギャップ、かつ次月も稼働対象）
-        if (cov === "covered") {
-          const nextCov = fullCoverageMap[e.manNo]?.[ymNext];
-          const activeMonths = e.activeMonths ?? [];
-          const isActiveNextMonth = activeMonths.length === 0 || activeMonths.includes(ymNext);
-          if (nextCov === "gap" && isActiveNextMonth) alertCount++;
-        }
-        // 🟠 当月終了（スプレッドシートの終了フラグは現在月のみ有効）
-        if (ym === currentM && e.ending === 1) alertCount++;
-      });
-      result[ym] = alertCount;
-    }
-    return result;
-  }, [filtered, fullCoverageMap, allCandidateMonths]);
-
-  // 表示月: アラート1件以上の月 + 現在月は常に表示
+  // 表示月: 年度通し12ヶ月を常に全て表示
   const calendarMonths = useMemo(() => {
-    const currentM = getCurrentMonthKey();
-    return allCandidateMonths.filter(ym =>
-      ym === currentM || (monthAlertCounts[ym] ?? 0) > 0
-    );
-  }, [allCandidateMonths, monthAlertCounts]);
-
-  // クローズ済月数: 対象範囲内でアラート0件かつ現在月でない月の数
-  const closedMonthCount = useMemo(() => {
-    const currentM = getCurrentMonthKey();
-    return allCandidateMonths.filter(ym =>
-      ym !== currentM && (monthAlertCounts[ym] ?? 0) === 0
-    ).length;
-  }, [allCandidateMonths, monthAlertCounts]);
+    return allCandidateMonths;
+  }, [allCandidateMonths]);
 
   // サマリー統計（当月基準で固定計算）
   const counts = useMemo(() => {
@@ -436,14 +422,28 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
         </div>
       ) : (
         <>
+          {/* 年度セレクター */}
+          <div className="flex items-center gap-2 mb-5">
+            <span className="text-xs font-medium" style={{ color: "#6b7280" }}>📅 表示年度</span>
+            <select
+              value={selectedFiscalYear}
+              onChange={e => setSelectedFiscalYear(Number(e.target.value))}
+              className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm font-medium bg-white"
+              style={{ color: "#111827" }}
+            >
+              {fiscalYearOptions.map(opt => (
+                <option key={opt.year} value={opt.year}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+
           {/* サマリーカード */}
-          <div className="grid grid-cols-5 gap-3.5 mb-5">
+          <div className="grid grid-cols-4 gap-3.5 mb-5">
             {[
               { label: "当月ギャップ", val: counts.gap, color: "#dc2626", bg: "#fef2f2", border: "#fecaca", icon: "🚨", unit: "件" },
               { label: "来月切れ", val: counts.expiring, color: "#d97706", bg: "#fffbeb", border: "#fde68a", icon: "⏰", unit: "件" },
               { label: "正常カバー", val: counts.normal, color: "#059669", bg: "#ecfdf5", border: "#a7f3d0", icon: "✓", unit: "件" },
               { label: "監視中", val: counts.total, color: "#3b82f6", bg: "#eff6ff", border: "#bfdbfe", icon: "👥", unit: "件" },
-              { label: "クローズ済", val: closedMonthCount, color: "#16a34a", bg: "#f0fdf4", border: "#86efac", icon: "✅", unit: "月" },
             ].map(m => (
               <div key={m.label} className="relative overflow-hidden rounded-xl p-4" style={{ background: m.bg, border: `1.5px solid ${m.border}` }}>
                 <p className="text-xs font-medium mb-1" style={{ color: m.color }}>{m.label}</p>
