@@ -34,7 +34,7 @@ async function getTokenScopes(token: string): Promise<string> {
 }
 
 /** フォルダのメタデータを取得して存在確認 */
-async function checkFolderAccess(drive: ReturnType<typeof google.drive>, folderId: string): Promise<{ ok: boolean; detail: string }> {
+async function checkFolderAccess(drive: ReturnType<typeof google.drive>, folderId: string): Promise<{ ok: boolean; detail: string; status?: number }> {
   try {
     const res = await drive.files.get({
       fileId: folderId,
@@ -43,8 +43,9 @@ async function checkFolderAccess(drive: ReturnType<typeof google.drive>, folderI
     });
     return { ok: true, detail: JSON.stringify({ name: res.data.name, mimeType: res.data.mimeType, driveId: res.data.driveId }) };
   } catch (e: unknown) {
-    const gErr = e as { response?: { status?: number; data?: unknown } };
-    return { ok: false, detail: `status=${gErr?.response?.status} data=${JSON.stringify(gErr?.response?.data)}` };
+    const gErr = e as { response?: { status?: number; data?: unknown }; code?: number };
+    const status = gErr?.response?.status ?? gErr?.code;
+    return { ok: false, detail: `status=${status} data=${JSON.stringify(gErr?.response?.data)}`, status };
   }
 }
 
@@ -81,8 +82,11 @@ export async function POST(req: NextRequest) {
     console.log("[drive debug]", { scopes, folderId, folderCheck });
 
     if (!folderCheck.ok) {
+      const folderError = folderCheck.status === 401
+        ? "ログインの有効期限が切れました。一度ログアウトして、再ログイン後にもう一度お試しください。"
+        : "フォルダにアクセスできません";
       return NextResponse.json({
-        error: `フォルダにアクセスできません`,
+        error: folderError,
         _debug: { scopes, folderId, folderCheck: folderCheck.detail },
       }, { status: 403 });
     }
