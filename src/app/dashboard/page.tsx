@@ -94,9 +94,11 @@ interface DashboardPageProps {
   onSwitch: (e: Engineer) => void;
   onGapCountChange?: (n: number) => void;
   isAdmin?: boolean;
+  myOnly: boolean;
+  onMyOnlyChange: (v: boolean) => void;
 }
 
-export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = false }: DashboardPageProps) {
+export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = false, myOnly, onMyOnlyChange }: DashboardPageProps) {
   const { user, accessToken, reauth } = useAuth();
   const [engineers, setEngineers] = useState<Engineer[]>([]);
   const [orders, setOrders] = useState<OrderRecord[]>([]);
@@ -107,7 +109,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [overrides, setOverrides] = useState<Record<string, Record<string, "covered" | "gap" | "na">>>({});
   const [locFilter, setLocFilter] = useState("全拠点");
-  const [myOnly, setMyOnly] = useState(false);
+
   const [search, setSearch] = useState("");
   const [overrideMenu, setOverrideMenu] = useState<{ manNo: number; ym: string; x: number; y: number } | null>(null);
   const [savingOverride, setSavingOverride] = useState(false);
@@ -497,7 +499,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
               ${myOnly ? "bg-blue-50 border-blue-300 text-blue-700" : "bg-white border-slate-300"}`}
               style={myOnly ? {} : { color: "#374151" }}
             >
-              <input type="checkbox" checked={myOnly} onChange={e => setMyOnly(e.target.checked)} className="accent-blue-500" />
+              <input type="checkbox" checked={myOnly} onChange={e => onMyOnlyChange(e.target.checked)} className="accent-blue-500" />
               自分の担当のみ（{currentTantou || "—"}）
             </label>
             <div className="ml-auto relative">
