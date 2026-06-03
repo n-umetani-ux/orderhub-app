@@ -129,3 +129,36 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+
+/** Drive内に同名ファイルが存在するか検索する
+ *  失敗時は exists:false を返し、保存処理を止めない */
+export async function GET(req: NextRequest) {
+  const accessToken = req.headers.get("x-google-access-token");
+  if (!accessToken) return NextResponse.json({ exists: false });
+
+  try {
+    const fileName = req.nextUrl.searchParams.get("fileName") ?? "";
+    if (!fileName) return NextResponse.json({ exists: false });
+
+    const oauth2 = new google.auth.OAuth2();
+    oauth2.setCredentials({ access_token: accessToken });
+    const sheets = google.sheets({ version: "v4", auth: oauth2 });
+    const drive  = google.drive({ version: "v3", auth: oauth2 });
+
+    const folderId = (await getDriveFolderId(sheets)).trim();
+    if (!folderId) return NextResponse.json({ exists: false });
+
+    const escaped = fileName.replace(/'/g, "\\'");
+    const res = await drive.files.list({
+      q: `name='${escaped}' and '${folderId}' in parents and trashed=false`,
+      fields: "files(id)",
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+    });
+
+    return NextResponse.json({ exists: (res.data.files ?? []).length > 0 });
+  } catch {
+    // 検索失敗は exists:false として保存を止めない
+    return NextResponse.json({ exists: false });
+  }
+}

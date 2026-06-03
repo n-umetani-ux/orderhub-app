@@ -318,6 +318,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
   const [existingOrders, setExistingOrders] = useState<OrderRecord[]>([]);
   const [preCheckWarnings, setPreCheckWarnings] = useState<ValidationWarning[]>([]);
   const [showWarningConfirm, setShowWarningConfirm] = useState(false);
+  const [checkingDuplicate, setCheckingDuplicate] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 既存注文書を取得（チェック用）
@@ -526,7 +527,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
   };
 
   /** バリデーション実行 → 警告があれば確認ダイアログ表示 */
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!activeEntry?.file) { setUploadError("PDFファイルを選択してください"); return; }
     if (!startDate || !endDate) { setUploadError("契約期間を入力してください"); return; }
     if (targetType === "multi(チーム)" && multiMembers.length === 0) { setUploadError("チームメンバーを1名以上追加してください"); return; }
@@ -552,6 +553,28 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
         engineerCustomerCode: selectedEng?.code, inputCustomerCode: selectedEng?.code,
         pdfExtractedNames: pdfNames, selectedName: selectedEng?.name,
       });
+    }
+
+    // Drive重複チェック（失敗しても保存は止めない）
+    setCheckingDuplicate(true);
+    try {
+      const dupRes = await fetch(
+        `/api/drive?fileName=${encodeURIComponent(fileName)}`,
+        { headers: accessToken ? { "x-google-access-token": accessToken } : {} },
+      );
+      if (dupRes.ok) {
+        const dupData = await dupRes.json() as { exists?: boolean };
+        if (dupData.exists) {
+          warnings.push({
+            level: "warn",
+            message: `Drive内に同名の注文書が既に存在します（${fileName}）。上書きせず2件目として保存されます。続けますか？`,
+          });
+        }
+      }
+    } catch {
+      // チェック失敗は無視して続行
+    } finally {
+      setCheckingDuplicate(false);
     }
 
     setPreCheckWarnings(warnings);
@@ -1045,10 +1068,10 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
 
               <button
                 onClick={handleSubmit}
-                disabled={uploading || !activeEntry}
+                disabled={uploading || checkingDuplicate || !activeEntry}
                 className="w-full py-3.5 rounded-xl bg-gradient-to-r from-slate-800 to-slate-700 text-white font-bold text-sm tracking-wide hover:from-slate-700 hover:to-slate-600 transition-all disabled:opacity-50"
               >
-                {uploading ? "アップロード中…" : "✓ 内容を確定し、期間ステータスを更新する"}
+                {uploading ? "アップロード中…" : checkingDuplicate ? "確認中…" : "✓ 内容を確定し、期間ステータスを更新する"}
               </button>
             </div>
           </div>
