@@ -49,6 +49,39 @@ async function checkFolderAccess(drive: ReturnType<typeof google.drive>, folderI
   }
 }
 
+/** 顧客サブフォルダを検索し、なければ作成して ID を返す
+ *  作成後に再検索して最初のIDを採用（並行アップロード時のフォルダ重複対策） */
+async function getOrCreateCustomerFolder(
+  drive: ReturnType<typeof google.drive>,
+  parentFolderId: string,
+  customerCode: string,
+): Promise<string> {
+  const escaped = customerCode.replace(/'/g, "\\'");
+  const folderQuery = `name='${escaped}' and '${parentFolderId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+  const listOpts = { fields: "files(id)", supportsAllDrives: true, includeItemsFromAllDrives: true } as const;
+
+  const existing = await drive.files.list({ q: folderQuery, ...listOpts });
+  if ((existing.data.files ?? []).length > 0) {
+    return existing.data.files![0].id!;
+  }
+
+  await drive.files.create({
+    requestBody: {
+      name: customerCode,
+      mimeType: "application/vnd.google-apps.folder",
+      parents: [parentFolderId],
+    },
+    fields: "id",
+    supportsAllDrives: true,
+  });
+
+  // 作成後に再検索 → 2個できた場合も最初のIDに統一
+  const verify = await drive.files.list({ q: folderQuery, ...listOpts });
+  const firstId = (verify.data.files ?? [])[0]?.id;
+  if (!firstId) throw new Error(`顧客フォルダ作成後の再検索失敗: ${customerCode}`);
+  return firstId;
+}
+
 export async function POST(req: NextRequest) {
   const accessToken = req.headers.get("x-google-access-token");
   if (!accessToken) {
@@ -59,6 +92,7 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
     const fileName = formData.get("fileName") as string | null;
+    const customerCode = ((formData.get("customerCode") as string | null) ?? "").trim();
 
     if (!file || !fileName) {
       return NextResponse.json({ error: "file と fileName は必須です" }, { status: 400 });
@@ -69,17 +103,17 @@ export async function POST(req: NextRequest) {
     const sheets = google.sheets({ version: "v4", auth: oauth2 });
     const drive = google.drive({ version: "v3", auth: oauth2 });
 
-    const folderId = (await getDriveFolderId(sheets)).trim();
-    if (!folderId) {
+    const parentFolderId = (await getDriveFolderId(sheets)).trim();
+    if (!parentFolderId) {
       return NextResponse.json({ error: "GOOGLE_DRIVE_FOLDER_ID が未設定です" }, { status: 500 });
     }
 
     // デバッグ: トークンスコープとフォルダアクセスを事前チェック
     const [scopes, folderCheck] = await Promise.all([
       getTokenScopes(accessToken),
-      checkFolderAccess(drive, folderId),
+      checkFolderAccess(drive, parentFolderId),
     ]);
-    console.log("[drive debug]", { scopes, folderId, folderCheck });
+    console.log("[drive debug]", { scopes, parentFolderId, folderCheck });
 
     if (!folderCheck.ok) {
       const folderError = folderCheck.status === 401
@@ -87,8 +121,19 @@ export async function POST(req: NextRequest) {
         : "フォルダにアクセスできません";
       return NextResponse.json({
         error: folderError,
-        _debug: { scopes, folderId, folderCheck: folderCheck.detail },
+        _debug: { scopes, parentFolderId, folderCheck: folderCheck.detail },
       }, { status: 403 });
+    }
+
+    // 顧客サブフォルダへ振り分け（失敗時は親フォルダにフォールバック）
+    let uploadFolderId = parentFolderId;
+    if (customerCode) {
+      try {
+        uploadFolderId = await getOrCreateCustomerFolder(drive, parentFolderId, customerCode);
+        console.log("[drive POST] 顧客フォルダ決定", { customerCode, uploadFolderId });
+      } catch {
+        console.warn("[drive POST] 顧客フォルダ取得/作成失敗。親フォルダに保存します", { customerCode });
+      }
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
@@ -97,7 +142,7 @@ export async function POST(req: NextRequest) {
     const res = await drive.files.create({
       requestBody: {
         name: fileName,
-        parents: [folderId],
+        parents: [uploadFolderId],
       },
       media: {
         mimeType: "application/pdf",
@@ -107,7 +152,7 @@ export async function POST(req: NextRequest) {
       supportsAllDrives: true,
     });
 
-    return NextResponse.json({ link: res.data.webViewLink ?? res.data.id, folderId });
+    return NextResponse.json({ link: res.data.webViewLink ?? res.data.id, folderId: uploadFolderId });
   } catch (e: unknown) {
     console.error("[drive API]", e);
     const detail = e instanceof Error ? e.message : String(e);
@@ -137,7 +182,8 @@ export async function GET(req: NextRequest) {
   if (!accessToken) return NextResponse.json({ exists: false });
 
   try {
-    const fileName = req.nextUrl.searchParams.get("fileName") ?? "";
+    const fileName     = req.nextUrl.searchParams.get("fileName") ?? "";
+    const customerCode = (req.nextUrl.searchParams.get("customerCode") ?? "").trim();
     if (!fileName) return NextResponse.json({ exists: false });
 
     const oauth2 = new google.auth.OAuth2();
@@ -145,18 +191,39 @@ export async function GET(req: NextRequest) {
     const sheets = google.sheets({ version: "v4", auth: oauth2 });
     const drive  = google.drive({ version: "v3", auth: oauth2 });
 
-    const folderId = (await getDriveFolderId(sheets)).trim();
-    if (!folderId) return NextResponse.json({ exists: false });
+    const parentFolderId = (await getDriveFolderId(sheets)).trim();
+    if (!parentFolderId) return NextResponse.json({ exists: false });
 
-    const escaped = fileName.replace(/'/g, "\\'");
-    const res = await drive.files.list({
-      q: `name='${escaped}' and '${folderId}' in parents and trashed=false`,
-      fields: "files(id)",
-      supportsAllDrives: true,
-      includeItemsFromAllDrives: true,
+    const fileEscaped = fileName.replace(/'/g, "\\'");
+    const listOpts = { fields: "files(id)", supportsAllDrives: true, includeItemsFromAllDrives: true } as const;
+
+    // 顧客フォルダ内の検索（customerCode がある場合）
+    let customerFolderHits = 0;
+    if (customerCode) {
+      const ccEscaped = customerCode.replace(/'/g, "\\'");
+      const folderRes = await drive.files.list({
+        q: `name='${ccEscaped}' and '${parentFolderId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+        ...listOpts,
+      });
+      const customerFolderId = (folderRes.data.files ?? [])[0]?.id;
+      if (customerFolderId) {
+        const fileRes = await drive.files.list({
+          q: `name='${fileEscaped}' and '${customerFolderId}' in parents and trashed=false`,
+          ...listOpts,
+        });
+        customerFolderHits = (fileRes.data.files ?? []).length;
+      }
+    }
+
+    // 親フォルダ直下の検索（既存フラット保存済みとの重複チェック）
+    const parentRes = await drive.files.list({
+      q: `name='${fileEscaped}' and '${parentFolderId}' in parents and trashed=false`,
+      ...listOpts,
     });
+    const parentFolderHits = (parentRes.data.files ?? []).length;
 
-    return NextResponse.json({ exists: (res.data.files ?? []).length > 0 });
+    console.log("[drive GET] 重複チェック", { fileName, customerCode, customerFolderHits, parentFolderHits });
+    return NextResponse.json({ exists: customerFolderHits + parentFolderHits > 0 });
   } catch {
     // 検索失敗は exists:false として保存を止めない
     return NextResponse.json({ exists: false });

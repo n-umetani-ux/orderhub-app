@@ -556,10 +556,11 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
     }
 
     // Drive重複チェック（失敗しても保存は止めない）
+    const cCode = targetType === "multi(チーム)" ? multiCustomerCode : (selectedEng?.code ?? "");
     setCheckingDuplicate(true);
     try {
       const dupRes = await fetch(
-        `/api/drive?fileName=${encodeURIComponent(fileName)}`,
+        `/api/drive?fileName=${encodeURIComponent(fileName)}&customerCode=${encodeURIComponent(cCode)}`,
         { headers: accessToken ? { "x-google-access-token": accessToken } : {} },
       );
       if (dupRes.ok) {
@@ -593,9 +594,11 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
     setUploading(true);
     setUploadError(null);
     try {
+      const cCode = targetType === "multi(チーム)" ? multiCustomerCode : (selectedEng?.code ?? "");
       const form = new FormData();
       form.append("file", activeEntry.file);
       form.append("fileName", fileName);
+      form.append("customerCode", cCode);
       let currentToken = accessToken;
       let res = await fetch("/api/drive", {
         method: "POST",
@@ -612,6 +615,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
           const retryForm = new FormData();
           retryForm.append("file", activeEntry.file);
           retryForm.append("fileName", fileName);
+          retryForm.append("customerCode", cCode);
           res = await fetch("/api/drive", {
             method: "POST",
             headers: currentToken ? { "x-google-access-token": currentToken } : {},
