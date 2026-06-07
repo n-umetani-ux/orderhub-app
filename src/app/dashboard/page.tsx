@@ -15,6 +15,7 @@ interface OrderRecord {
   name: string;
   contractStart: string;
   contractEnd: string;
+  driveLink?: string;
 }
 
 /** YYYY-MM 形式の月キーを生成 */
@@ -593,10 +594,19 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
                       {calendarMonths.map((ym, i) => {
                         const status = coverage[ym];
                         const isOverridden = !!overrides[String(e.manNo)]?.[ym];
+                        const coveringDriveLink =
+                          !isOverridden && status === "covered"
+                            ? (ordersByManNo[String(e.manNo)] ?? [])
+                                .filter(o => orderCoversMonth(o, ym))
+                                .map(o => o.driveLink ?? "")
+                                .filter(link => link !== "")
+                                .slice(-1)[0] ?? ""
+                            : "";
+                        const isLinkable = coveringDriveLink !== "";
                         return (
                           <td
                             key={ym}
-                            className={`text-center py-2 relative ${isAdmin ? "cursor-pointer" : ""} ${i === 0 ? "border-l-2 border-l-blue-300" : ""}`}
+                            className={`text-center py-2 relative ${(isAdmin || isLinkable) ? "cursor-pointer" : ""} ${i === 0 ? "border-l-2 border-l-blue-300" : ""}`}
                             style={{
                               backgroundColor: status === "na" ? "#f8fafc" :
                                 status === "covered" ? "#f0fdf4" :
@@ -606,11 +616,23 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
                               ev.preventDefault();
                               setOverrideMenu({ manNo: e.manNo, ym, x: ev.clientX, y: ev.clientY });
                             }) : undefined}
+                            onClick={isLinkable ? () => window.open(coveringDriveLink, "_blank", "noopener,noreferrer") : undefined}
                           >
                             {status === "na" ? (
                               <span style={{ color: "#cbd5e1", fontSize: "11px" }}>—</span>
                             ) : status === "covered" ? (
-                              <span style={{ color: "#16a34a", fontSize: "13px", fontWeight: 700 }}>○</span>
+                              <span
+                                style={{
+                                  color: "#16a34a",
+                                  fontSize: "13px",
+                                  fontWeight: 700,
+                                  textDecoration: isLinkable ? "underline" : "none",
+                                  cursor: isLinkable ? "pointer" : "default",
+                                }}
+                                title={isLinkable ? "クリックして注文書PDFを開く" : undefined}
+                              >
+                                ○
+                              </span>
                             ) : (
                               <span style={{ color: "#dc2626", fontSize: "11px", fontWeight: 700 }}>未</span>
                             )}
