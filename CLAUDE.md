@@ -1,3 +1,5 @@
+作成日: 2026-04-02 / 最終更新: 2026-06-10
+
 \# OrderHub - 注文書管理システム
 
 
@@ -352,11 +354,67 @@ I列(売上)、O列(原価)、X列(粗利) および J〜W列は API層で完全
 
 
 
-\*\*最終更新\*\*: 2026-05-29
+\*\*最終更新\*\*: 2026-06-10
 
 
 
 \## 直近のセッション要約
+
+
+
+\### 2026-06-10(火)セキュリティスキャン対応・#1 CRITICAL修正
+
+\*\*Claude Code 4プラグイン導入・初実戦\*\*
+
+\- typescript-lsp / code-review / commit-commands / security-guidance を導入
+
+\- 本セッションで全プラグインを実データで稼働(勉強会の教材化も兼ねる)
+
+
+
+\*\*security-guidance スキャン実施 → 18項目検出、再評価で仕分け\*\*
+
+\- 多くは「サーバー側で身元検証していない」単一原因に集約と判明
+
+
+
+\*\*SA化を検討 → 共有ドライブ制約で断念 → 中間シート方式を発案\*\*
+
+\- 稼働一覧・台帳とも共有ドライブ(G:\共有ドライブ\10\_営業管理者用\)上にあり、Workspaceポリシーで外部アカウント(SA)を共有ドライブに追加できないことを現物確認
+
+\- lib/sheets.ts・lib/drive.ts のSA実装はデッドコードと判明(参照0件。削除判断は別途)
+
+\- 根本対処は2案を比較検討(Phase 6前): (a)リフレッシュトークン自動更新 (b)中間シート方式(本命候補)
+
+\- ドキュメント反映済み(コミット 2655a56。詳細は「既知の制約」「将来検討事項」参照)
+
+
+
+\*\*#1 CRITICAL(settingsの管理者判定が x-user-email ヘッダー依存)→ 修正完了・本番デプロイ済み\*\*
+
+\- Firebase ID Token のサーバー側検証(firebase-admin verifyIdToken)に置き換え
+
+\- 新規 src/lib/firebase-admin.ts: verifyAuth() が Bearer トークンを検証し検証済みemail+ドメイン制限を返す(汎用設計・#2以降の横展開の土台)
+
+\- auth-context.tsx に getIdToken() 追加、Sidebar は Authorization: Bearer に切替、x-user-email 送信廃止(src全体で参照0件)
+
+\- code-review プラグインで8件指摘 → うち3件を即修正(ドメイン判定のtrim/lowercase正規化・初期化エラーを500で分離(401誤診断防止)・loadSettingsの無言スキップ解消)
+
+\- JSON.parse例外メッセージに秘密鍵断片が含まれ得るため固定文言化(ログへの秘密情報漏洩経路を遮断)
+
+\- 検証: tsc / vitest 33件 / next build 通過。実機で x-user-email 偽装POSTの401拒否と管理者の設定表示・保存を確認
+
+\- コミット: a49a749(コード6ファイル)+ 0cf7de8(docs)→ push → Vercel Production デプロイ success 確認済み(13:19 JST)
+
+
+
+\*\*残課題(次回)\*\*
+
+\- \[ \] email\_verified チェック未適用(security-guidance HIGH指摘): verifyAuth に1行追加+Firebaseコンソールで Google 以外のサインインプロバイダ(特にメール/パスワード)が無効であることを確認
+
+\- \[ \] code-review 残指摘(Bearer大文字小文字非区別・env未設定時の明示ログ)→ #2横展開時にまとめて対応
+
+\- \[ \] セキュリティスキャン残項目(#2以降)への対応
 
 
 
