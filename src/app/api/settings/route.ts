@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
+import { verifyAuth } from "@/lib/firebase-admin";
 
 const SPREADSHEET_ID = process.env.ORDER_LEDGER_SHEET_ID ?? process.env.GOOGLE_SHEETS_ID!;
 const SETTINGS_SHEET = "設定";
@@ -44,7 +45,12 @@ function parseAdminEmails(settings: Record<string, string>): string[] {
 }
 
 export async function GET(req: NextRequest) {
-  const userEmail = req.headers.get("x-user-email") ?? "";
+  // Firebase ID Token をサーバー側で検証（自己申告ヘッダーは信用しない）
+  const auth = await verifyAuth(req);
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.error }, { status: auth.status });
+  }
+  const userEmail = auth.email;
   const accessToken = req.headers.get("x-google-access-token");
 
   // トークンがない場合はデフォルト管理者のみ認識
@@ -68,7 +74,12 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const userEmail = req.headers.get("x-user-email") ?? "";
+  // Firebase ID Token をサーバー側で検証（自己申告ヘッダーは信用しない）
+  const auth = await verifyAuth(req);
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.error }, { status: auth.status });
+  }
+  const userEmail = auth.email;
   const accessToken = req.headers.get("x-google-access-token");
   if (!accessToken) {
     return NextResponse.json({ error: "アクセストークンがありません" }, { status: 401 });

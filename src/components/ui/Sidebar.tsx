@@ -16,7 +16,7 @@ interface SidebarProps {
 const DEFAULT_DRIVE_FOLDER_ID = process.env.NEXT_PUBLIC_DRIVE_FOLDER_ID || "1oCHSWVMh1XVI0yNBmbbi9bK-O8qwrR5k";
 
 export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: SidebarProps) {
-  const { user, accessToken, signOut } = useAuth();
+  const { user, accessToken, getIdToken, signOut } = useAuth();
   const name = user?.displayName?.split(" ")[0] ?? user?.email ?? "";
   const initial = name.charAt(0);
 
@@ -35,8 +35,16 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
   const loadSettings = useCallback(async () => {
     if (!userEmail || !accessToken) return;
     try {
+      const idToken = await getIdToken();
+      if (!idToken) {
+        // 無言で設定未読込のまま放置せず、サーバーの401応答に委ねる
+        console.warn("[Sidebar] IDトークンを取得できませんでした。認証なしで設定取得を試行します");
+      }
       const r = await fetch("/api/settings", {
-        headers: { "x-user-email": userEmail, "x-google-access-token": accessToken },
+        headers: {
+          ...(idToken ? { "Authorization": `Bearer ${idToken}` } : {}),
+          "x-google-access-token": accessToken,
+        },
       });
       const d = await r.json();
       setIsAdmin(d.isAdmin === true);
@@ -49,7 +57,7 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
         setAdminInput(d.settings.adminEmails);
       }
     } catch { /* ignore */ }
-  }, [userEmail, accessToken]);
+  }, [userEmail, accessToken, getIdToken]);
 
   useEffect(() => { loadSettings(); }, [loadSettings]);
 
@@ -57,7 +65,9 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
   useEffect(() => { onAdminChange?.(isAdmin); }, [isAdmin, onAdminChange]);
 
   const saveSetting = async (key: string, value: string) => {
-    const headers: Record<string, string> = { "Content-Type": "application/json", "x-user-email": userEmail };
+    const idToken = await getIdToken();
+    if (!idToken) throw new Error("認証情報がありません。再ログインしてください。");
+    const headers: Record<string, string> = { "Content-Type": "application/json", "Authorization": `Bearer ${idToken}` };
     if (accessToken) headers["x-google-access-token"] = accessToken;
     const r = await fetch("/api/settings", {
       method: "POST",

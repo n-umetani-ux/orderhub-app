@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from "react";
 import { User, onAuthStateChanged, signOut, signInWithPopup, GoogleAuthProvider } from "firebase/auth";
 import { auth, googleProvider } from "./firebase";
 
@@ -9,6 +9,7 @@ interface AuthContextValue {
   loading: boolean;
   accessToken: string | null;
   setAccessToken: (token: string | null) => void;
+  getIdToken: () => Promise<string | null>;
   signOut: () => Promise<void>;
   reauth: () => Promise<void>;
 }
@@ -39,6 +40,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return unsubscribe;
   }, []);
 
+  // Firebase ID Token（サーバー側で verifyIdToken により検証する）
+  const getIdToken = useCallback(async (): Promise<string | null> => {
+    if (!auth.currentUser) return null;
+    try {
+      return await auth.currentUser.getIdToken();
+    } catch {
+      return null;
+    }
+  }, []);
+
   const handleSignOut = async () => {
     await signOut(auth);
     setAccessToken(null);
@@ -51,7 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, accessToken, setAccessToken, signOut: handleSignOut, reauth: handleReauth }}>
+    <AuthContext.Provider value={{ user, loading, accessToken, setAccessToken, getIdToken, signOut: handleSignOut, reauth: handleReauth }}>
       {children}
     </AuthContext.Provider>
   );
