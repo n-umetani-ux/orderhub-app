@@ -311,6 +311,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
     prefill ? (DEPTS.find(d => d.loc === prefill.loc)?.code ?? "1010") : "1010"
   );
   const [dragging, setDragging]     = useState(false);
+  const [dropWarning, setDropWarning] = useState<string | null>(null);
   const [uploading, setUploading]   = useState(false);
   const [uploadResult, setUploadResult] = useState<string | null>(null);
   const [uploadFolderId, setUploadFolderId] = useState<string | null>(null);
@@ -385,13 +386,22 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
     }
   }, [prefill]);
 
-  /** ファイル追加処理（複数対応） */
+  /** ファイル取り込み処理（注文書は1枚のみ・案A）。
+   *  複数渡された場合は最初の1枚のみ採用し警告。既存エントリは破棄してobjectURLを解放。 */
   const handleFiles = useCallback(async (files: FileList | File[]) => {
     const pdfFiles = Array.from(files).filter(f => f.type.includes("pdf"));
     if (pdfFiles.length === 0) return;
 
-    // エントリを先に作成（extracting: true）
-    const newEntries: PdfEntry[] = pdfFiles.map(file => ({
+    // 複数検知時の保険: 最初の1枚のみ採用し警告
+    if (pdfFiles.length > 1) {
+      setDropWarning(`複数のPDFが選択されました。注文書は1枚ずつ登録してください。最初の1枚（${pdfFiles[0].name}）のみ取り込みます。`);
+    } else {
+      setDropWarning(null);
+    }
+    const file = pdfFiles[0];
+
+    // 単一エントリを作成（extracting: true）
+    const newEntry: PdfEntry = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       file,
       objectUrl: URL.createObjectURL(file),
@@ -402,52 +412,38 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
       extractedIssue: "",
       nameMatches: [],
       autoSelected: null,
-    }));
+    };
 
-    setPdfEntries(prev => [...prev, ...newEntries]);
+    // 既存エントリを破棄（objectURLを解放）して1件だけ保持
+    setPdfEntries(prev => {
+      prev.forEach(e => URL.revokeObjectURL(e.objectUrl));
+      return [newEntry];
+    });
+    setActiveId(newEntry.id);
 
-    // 最初の新しいファイルをアクティブにする
-    if (!activeId || pdfFiles.length === 1) {
-      setActiveId(newEntries[0].id);
+    // PDFを抽出してフォームに反映
+    try {
+      const result = await extractFromPdf(newEntry.file, user?.email ?? "");
+      setPdfEntries(prev => prev.map(e =>
+        e.id === newEntry.id ? { ...e, ...result, extracting: false } : e
+      ));
+      // 非同期の中でapplyEntryを呼ぶため、更新後のentryを使う
+      setActiveId(currentActive => {
+        if (currentActive === newEntry.id) {
+          const updated = { ...newEntry, ...result, extracting: false };
+          applyEntry(updated);
+        }
+        return currentActive;
+      });
+    } catch (err) {
+      console.error(`[PDF:${newEntry.file.name}] 抽出失敗:`, err);
+      setPdfEntries(prev => prev.map(e =>
+        e.id === newEntry.id ? { ...e, extracting: false, rawText: "（テキスト抽出に失敗しました）" } : e
+      ));
     }
+  }, [user?.email, applyEntry]);
 
-    // 各PDFを並列で抽出
-    for (const entry of newEntries) {
-      try {
-        const result = await extractFromPdf(entry.file, user?.email ?? "");
-        setPdfEntries(prev => prev.map(e =>
-          e.id === entry.id
-            ? { ...e, ...result, extracting: false }
-            : e
-        ));
-        // アクティブなエントリの抽出が完了したらフォームに反映
-        setActiveId(currentActive => {
-          if (currentActive === entry.id) {
-            // 非同期の中でapplyEntryを呼ぶため、更新後のentryを使う
-            const updated = { ...entry, ...result, extracting: false };
-            applyEntry(updated);
-          }
-          return currentActive;
-        });
-      } catch (err) {
-        console.error(`[PDF:${entry.file.name}] 抽出失敗:`, err);
-        setPdfEntries(prev => prev.map(e =>
-          e.id === entry.id ? { ...e, extracting: false, rawText: "（テキスト抽出に失敗しました）" } : e
-        ));
-      }
-    }
-  }, [activeId, user?.email, applyEntry]);
-
-  /** ファイルリストからPDFを選択 */
-  const selectEntry = useCallback((id: string) => {
-    setActiveId(id);
-    const entry = pdfEntries.find(e => e.id === id);
-    if (entry && !entry.extracting) {
-      applyEntry(entry);
-    }
-  }, [pdfEntries, applyEntry]);
-
-  /** ファイルリストからPDFを削除 */
+  /** 取り込み済みPDFをクリア（単数カードの削除ボタン） */
   const removeEntry = useCallback((id: string) => {
     setPdfEntries(prev => {
       const target = prev.find(e => e.id === id);
@@ -463,6 +459,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
           // リセット
           setStartDate(""); setEndDate(""); setIssueDate("");
           setSelected(null); setSearchVal(""); setSuggestions([]);
+          setDropWarning(null);
         }
       }
       return next;
@@ -685,8 +682,6 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
     }
   };
 
-  const extractingCount = pdfEntries.filter(e => e.extracting).length;
-
   return (
     <div>
       {/* Header */}
@@ -698,10 +693,10 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
           ← 戻る
         </button>
         <h1 className="text-xl font-bold tracking-tight" style={{ color: "#0f172a" }}>注文書の登録</h1>
-        {pdfEntries.length > 0 && (
+        {activeEntry && (
           <span className="ml-auto text-xs text-slate-500">
-            {pdfEntries.length}件のPDF
-            {extractingCount > 0 && <span className="ml-1.5 text-amber-600">（{extractingCount}件 抽出中…）</span>}
+            注文書 1件
+            {activeEntry.extracting && <span className="ml-1.5 text-amber-600">（抽出中…）</span>}
           </span>
         )}
       </div>
@@ -746,72 +741,71 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                 ref={fileInputRef}
                 type="file"
                 accept="application/pdf"
-                multiple
                 className="hidden"
                 onChange={e => e.target.files && e.target.files.length > 0 && handleFiles(e.target.files)}
               />
               <div className="text-3xl mb-2 opacity-40">📄</div>
               <p className="text-sm mb-3" style={{ color: "#1e293b" }}>
-                {pdfEntries.length > 0 ? "さらにPDFを追加" : "ここに注文書PDFをドロップ"}
+                {activeEntry ? "別のPDFに差し替える" : "ここに注文書PDFをドロップ"}
               </p>
               <span className="px-5 py-2 rounded-xl text-xs font-semibold" style={{ backgroundColor: "#2563eb", color: "#ffffff" }}>
-                ファイルを選択（複数可）
+                ファイルを選択
               </span>
             </div>
 
-            {/* ── ファイルリスト ── */}
-            {pdfEntries.length > 0 && (
-              <div className="mt-4 space-y-1.5">
+            {/* 常時表示の案内文 */}
+            <p className="mt-2 text-[11px] text-slate-500">📄 注文書は1枚ずつアップロードしてください。</p>
+
+            {/* 複数PDF検知時の警告 */}
+            {dropWarning && (
+              <div className="mt-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs">
+                ⚠️ {dropWarning}
+              </div>
+            )}
+
+            {/* ── 取り込み済みファイル（1件） ── */}
+            {activeEntry && (
+              <div className="mt-4">
                 <p className="text-xs font-semibold text-slate-500 mb-2">読み込み済みファイル</p>
-                {pdfEntries.map((entry) => (
-                  <div
-                    key={entry.id}
-                    className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border cursor-pointer transition-all group
-                      ${activeId === entry.id
-                        ? "border-blue-400 bg-blue-50 ring-1 ring-blue-200"
-                        : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
-                      }`}
-                    onClick={() => selectEntry(entry.id)}
-                  >
-                    <span className="text-lg flex-shrink-0">
-                      {entry.extracting ? (
-                        <span className="inline-block w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                      ) : "📄"}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-gray-900 truncate">{entry.file.name}</p>
-                      <p className="text-[10px] text-gray-500">
-                        {entry.extracting
-                          ? "テキスト抽出中…"
-                          : `${entry.rawText.length}字抽出`
-                            + (entry.extractedStart ? ` | ${entry.extractedStart}〜${entry.extractedEnd}` : "")
-                            + (entry.autoSelected ? ` | ${entry.autoSelected.name}` : entry.nameMatches.length > 1 ? ` | ${entry.nameMatches.length}名候補` : "")
-                        }
-                      </p>
-                    </div>
-                    {/* PDFを開くボタン */}
-                    <button
-                      onClick={(e) => { e.stopPropagation(); window.open(entry.objectUrl, "_blank"); }}
-                      title="PDFを開く"
-                      className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-blue-600 hover:bg-blue-100 transition-colors"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                        <path d="M10 12.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" />
-                        <path fillRule="evenodd" d="M.664 10.59a1.651 1.651 0 010-1.186A10.004 10.004 0 0110 3c4.257 0 7.893 2.66 9.336 6.41.147.381.146.804 0 1.186A10.004 10.004 0 0110 17c-4.257 0-7.893-2.66-9.336-6.41zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd" />
-                      </svg>
-                    </button>
-                    {/* 削除ボタン */}
-                    <button
-                      onClick={(e) => { e.stopPropagation(); removeEntry(entry.id); }}
-                      title="削除"
-                      className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                        <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                      </svg>
-                    </button>
+                <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-blue-400 bg-blue-50 ring-1 ring-blue-200">
+                  <span className="text-lg flex-shrink-0">
+                    {activeEntry.extracting ? (
+                      <span className="inline-block w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                    ) : "📄"}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-gray-900 truncate">{activeEntry.file.name}</p>
+                    <p className="text-[10px] text-gray-500">
+                      {activeEntry.extracting
+                        ? "テキスト抽出中…"
+                        : `${activeEntry.rawText.length}字抽出`
+                          + (activeEntry.extractedStart ? ` | ${activeEntry.extractedStart}〜${activeEntry.extractedEnd}` : "")
+                          + (activeEntry.autoSelected ? ` | ${activeEntry.autoSelected.name}` : activeEntry.nameMatches.length > 1 ? ` | ${activeEntry.nameMatches.length}名候補` : "")
+                      }
+                    </p>
                   </div>
-                ))}
+                  {/* PDFを開くボタン */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); window.open(activeEntry.objectUrl, "_blank"); }}
+                    title="PDFを開く"
+                    className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-blue-600 hover:bg-blue-100 transition-colors"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                      <path d="M10 12.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" />
+                      <path fillRule="evenodd" d="M.664 10.59a1.651 1.651 0 010-1.186A10.004 10.004 0 0110 3c4.257 0 7.893 2.66 9.336 6.41.147.381.146.804 0 1.186A10.004 10.004 0 0110 17c-4.257 0-7.893-2.66-9.336-6.41zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd" />
+                    </svg>
+                  </button>
+                  {/* クリアボタン */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); removeEntry(activeEntry.id); }}
+                    title="クリア"
+                    className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                      <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             )}
 
