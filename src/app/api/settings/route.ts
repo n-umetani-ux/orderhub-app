@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
 import { verifyAuth } from "@/lib/firebase-admin";
 
+// firebase-admin / googleapis は Node専用。Edgeで実行されないよう明示(保険)
+export const runtime = "nodejs";
+
 const SPREADSHEET_ID = process.env.ORDER_LEDGER_SHEET_ID ?? process.env.GOOGLE_SHEETS_ID!;
 const SETTINGS_SHEET = "設定";
 const DEFAULT_ADMIN = "n-umetani@beat-tech.co.jp";
