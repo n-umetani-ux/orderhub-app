@@ -1,28 +1,19 @@
 import { NextRequest } from "next/server";
-import { initializeApp, getApps, cert } from "firebase-admin/app";
-import { getAuth } from "firebase-admin/auth";
+
+// ── Firebase ID Token のサーバー側検証（fetchベース・ライブラリ非依存）──
+// 旧実装は firebase-admin(verifyIdToken)を使っていたが、Vercel(Turbopack)で
+// 外部モジュールのロードに失敗するため、Identity Toolkit の accounts:lookup を
+// fetch で叩く方式に置き換えた。これにより firebase-admin への依存を完全に排除。
+// 検証対象は Firebase ID Token(iss=securetoken.google.com)であり、Google OIDC用の
+// oauth2.googleapis.com/tokeninfo とは別物なので使わない。
 
 // env値の末尾空白・改行・大文字混入で全ユーザー403にならないよう正規化（c11d0ca同型事故の予防）
 const ALLOWED_DOMAIN = (process.env.NEXT_PUBLIC_ALLOWED_DOMAIN || "example.com").trim().toLowerCase();
+const FIREBASE_API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY ?? "";
 
-/** firebase-admin を初期化して Auth を返す（二重初期化ガード付き） */
-function getAdminAuth() {
-  if (getApps().length === 0) {
-    let credentials;
-    try {
-      credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON!);
-    } catch {
-      // JSON.parse の例外メッセージは入力断片（秘密鍵の一部）を含み得るため、固定文言に差し替える
-      throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON のJSONパースに失敗しました");
-    }
-    // Vercel 環境変数では private_key の改行が \n エスケープのまま入る場合がある
-    if (typeof credentials.private_key === "string") {
-      credentials.private_key = credentials.private_key.replace(/\\n/g, "\n");
-    }
-    initializeApp({ credential: cert(credentials) });
-  }
-  return getAuth();
-}
+// Identity Toolkit: ID Token を渡すと有効性(署名・期限・プロジェクト整合)を
+// Google 側で検証し、検証済みユーザー情報(email/emailVerified)を返す
+const LOOKUP_ENDPOINT = "https://identitytoolkit.googleapis.com/v1/accounts:lookup";
 
 export type VerifiedAuth =
   | { ok: true; email: string; domain: string }
@@ -30,7 +21,8 @@ export type VerifiedAuth =
 
 /**
  * Authorization: Bearer <Firebase ID Token> を検証し、検証済みの email とドメインを返す。
- * 社内ドメイン（NEXT_PUBLIC_ALLOWED_DOMAIN）以外は拒否する。
+ * 社内ドメイン（NEXT_PUBLIC_ALLOWED_DOMAIN）以外・未確認メールは拒否する。
+ * 偽造不可能な ID Token のみを信頼し、ヘッダーの自己申告は一切信用しない。
  */
 export async function verifyAuth(req: NextRequest): Promise<VerifiedAuth> {
   const authHeader = req.headers.get("authorization") ?? "";
@@ -39,28 +31,70 @@ export async function verifyAuth(req: NextRequest): Promise<VerifiedAuth> {
     return { ok: false, status: 401, error: "認証情報がありません。再ログインしてください。" };
   }
 
-  // 初期化失敗（env破損等のサーバー設定異常）はトークン期限切れと区別し、再ログインループを防ぐ
-  let adminAuth;
-  try {
-    adminAuth = getAdminAuth();
-  } catch (e) {
-    console.error("[verifyAuth] firebase-admin 初期化失敗:", e instanceof Error ? e.message : String(e));
+  // APIキー未設定はサーバー設定異常。トークン期限切れ(401)と区別し再ログインループを防ぐ
+  if (!FIREBASE_API_KEY) {
+    console.error("[verifyAuth] NEXT_PUBLIC_FIREBASE_API_KEY が未設定です");
     return { ok: false, status: 500, error: "認証処理でエラーが発生しました(管理者に連絡してください)" };
   }
 
+  // Identity Toolkit へ問い合わせ。ネットワーク失敗はサーバー異常(500)として分離
+  let res: Response;
   try {
-    const decoded = await adminAuth.verifyIdToken(idToken);
-    const email = decoded.email ?? "";
-    if (!email) {
-      return { ok: false, status: 401, error: "認証情報にメールアドレスが含まれていません。再ログインしてください。" };
-    }
-    const domain = email.toLowerCase().split("@")[1] ?? "";
-    if (domain !== ALLOWED_DOMAIN) {
-      return { ok: false, status: 403, error: "社内アカウント以外ではアクセスできません" };
-    }
-    return { ok: true, email, domain };
+    res = await fetch(`${LOOKUP_ENDPOINT}?key=${encodeURIComponent(FIREBASE_API_KEY)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken }),
+      // ネットワーク断・無応答で関数が固まらないよう5秒で打ち切る
+      signal: AbortSignal.timeout(5000),
+    });
   } catch (e) {
-    console.error("[verifyAuth] IDトークン検証失敗:", e instanceof Error ? e.message : e);
-    return { ok: false, status: 401, error: "認証の有効期限が切れています。再ログインしてください。" };
+    // タイムアウト(AbortSignal.timeout は TimeoutError、保険で AbortError も)はサーバー一時異常として扱う
+    const name = e instanceof Error ? e.name : "";
+    if (name === "TimeoutError" || name === "AbortError") {
+      console.error("[verifyAuth] accounts:lookup タイムアウト");
+      return { ok: false, status: 500, error: "認証サービスが応答しません(時間をおいて再度お試しください)" };
+    }
+    // URL/keyはログに出さない（秘密情報漏洩経路を作らない）
+    console.error("[verifyAuth] accounts:lookup 通信失敗:", e instanceof Error ? e.message : String(e));
+    return { ok: false, status: 500, error: "認証処理でエラーが発生しました(管理者に連絡してください)" };
   }
+
+  const data = await res.json().catch(() => null) as
+    | { users?: { email?: string; emailVerified?: boolean }[]; error?: { message?: string } }
+    | null;
+
+  if (!res.ok) {
+    // 401(トークン起因)と500(サーバー/設定起因)はHTTPステータスで一次分岐する。
+    // 文字列一致は誤分類・将来の文言変更に弱いため使わない(5/22型の誤診断回避)。
+    if (res.status >= 500 || res.status === 429) {
+      // Google側の障害・レート制限。再ログインを促さない
+      console.error("[verifyAuth] accounts:lookup 一時障害:", res.status);
+      return { ok: false, status: 500, error: "認証サービスが一時的に利用できません(時間をおいて再度お試しください)" };
+    }
+    if (res.status === 400 || res.status === 401) {
+      // トークン無効・期限切れ
+      return { ok: false, status: 401, error: "認証の有効期限が切れています。再ログインしてください。" };
+    }
+    // 想定外(403等)は安全側でサーバー/設定異常として扱う
+    console.error("[verifyAuth] accounts:lookup 想定外ステータス:", res.status);
+    return { ok: false, status: 500, error: "認証処理でエラーが発生しました(管理者に連絡してください)" };
+  }
+
+  const user = data?.users?.[0];
+  if (!user || !user.email) {
+    return { ok: false, status: 401, error: "認証情報にメールアドレスが含まれていません。再ログインしてください。" };
+  }
+
+  // email_verified を必須化（Google以外のサインインプロバイダ混入時の防御 / #1 HIGH残課題の解消）
+  if (user.emailVerified !== true) {
+    return { ok: false, status: 403, error: "メールアドレスが未確認のアカウントではアクセスできません" };
+  }
+
+  const email = user.email;
+  const domain = email.toLowerCase().split("@")[1] ?? "";
+  if (domain !== ALLOWED_DOMAIN) {
+    return { ok: false, status: 403, error: "社内アカウント以外ではアクセスできません" };
+  }
+
+  return { ok: true, email, domain };
 }
