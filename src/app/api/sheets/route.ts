@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
-import { toEngineer, OrderRecord } from "@/lib/gap-detector";
+import { toEngineer, selectEffectiveOrders, OrderRecord } from "@/lib/gap-detector";
 import { getActiveSheetIds, getOrderLedgerSheetId } from "@/lib/monthly-sheets";
 
 const LEDGER_SHEET_ID = getOrderLedgerSheetId();
@@ -380,12 +380,12 @@ export async function GET(req: NextRequest) {
     try {
       const ordersRes = await sheets.spreadsheets.values.get({
         spreadsheetId: LEDGER_SHEET_ID,
-        range: "注文書台帳!A:D",
+        range: "注文書台帳!A:K", // uploadedAt(K列) まで読む（dedup の世代判定に使用）
       });
       const ordersRows = (ordersRes.data.values ?? []) as string[][];
       for (const row of ordersRows.slice(1)) {
         if (!row[0] || !row[2] || !row[3]) continue;
-        const rec: OrderRecord = { manNo: row[0], contractStart: row[2], contractEnd: row[3] };
+        const rec: OrderRecord = { manNo: row[0], contractStart: row[2], contractEnd: row[3], uploadedAt: row[10] ?? "", customerCode: row[7] ?? "" };
         const arr = ordersByManNo.get(row[0]) ?? [];
         arr.push(rec);
         ordersByManNo.set(row[0], arr);
@@ -415,7 +415,9 @@ export async function GET(req: NextRequest) {
        Step 3: gap-detector でステータスを確定
        ────────────────────────────────────────── */
     const engineers = deduped.map(e => {
-      const eng = toEngineer(e, ordersByManNo.get(e.manNo) ?? [], archivedManNos.has(e.manNo));
+      // dedup: 重なる古い行を除外した「有効な注文書」でステータス判定（カバレッジ計算用）
+      const effectiveOrders = selectEffectiveOrders(ordersByManNo.get(e.manNo) ?? []);
+      const eng = toEngineer(e, effectiveOrders, archivedManNos.has(e.manNo));
       const months = manNoActiveMonths.get(e.manNo);
       return {
         ...eng,

@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { Engineer, STATUS_CONFIG, DEPTS, SALES_STAFF } from "@/types";
 import { useAuth } from "@/lib/auth-context";
 import { loadCache, saveCache, formatCachedAt } from "@/lib/sheets-cache";
+import { selectEffectiveOrders } from "@/lib/gap-detector";
 
 const LOCS = ["全拠点", "東京", "大阪", "福岡"] as const;
 
@@ -16,6 +17,8 @@ interface OrderRecord {
   contractStart: string;
   contractEnd: string;
   driveLink?: string;
+  uploadedAt?: string;   // dedup の世代判定キー（/api/orders が返す登録日時）
+  customerCode?: string; // dedup のグループキー（別顧客の並行稼働を別系列に）
 }
 
 /** YYYY-MM 形式の月キーを生成 */
@@ -216,6 +219,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
   }, [engineers, locFilter, myOnly, currentTantou, search]);
 
   // 注文書をmanNoでグループ化
+  // 表示用: 台帳の生の行をそのまま manNo 別に保持（アコーディオン・Driveリンク用）
   const ordersByManNo = useMemo(() => {
     const map: Record<string, OrderRecord[]> = {};
     orders.forEach(o => {
@@ -225,6 +229,15 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
     });
     return map;
   }, [orders]);
+
+  // 計算用: 重なる古い行を除外した dedup 済みリスト（カバレッジ/ギャップ計算のみに使用）
+  const effectiveOrdersByManNo = useMemo(() => {
+    const map: Record<string, OrderRecord[]> = {};
+    for (const [key, list] of Object.entries(ordersByManNo)) {
+      map[key] = selectEffectiveOrders(list);
+    }
+    return map;
+  }, [ordersByManNo]);
 
   // 年度選択肢: 現在年度 + 翌年度の2つ
   const fiscalYearOptions = useMemo(() => {
@@ -245,7 +258,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
   const fullCoverageMap = useMemo(() => {
     const map: Record<number, Record<string, "covered" | "gap" | "na">> = {};
     filtered.forEach(e => {
-      const engOrders = ordersByManNo[String(e.manNo)] ?? [];
+      const engOrders = effectiveOrdersByManNo[String(e.manNo)] ?? [];
       const activeMonths = e.activeMonths ?? [];
       const engOverrides = overrides[String(e.manNo)] ?? {};
       const months: Record<string, "covered" | "gap" | "na"> = {};
@@ -266,7 +279,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
       map[e.manNo] = months;
     });
     return map;
-  }, [filtered, ordersByManNo, allCandidateMonths, overrides]);
+  }, [filtered, effectiveOrdersByManNo, allCandidateMonths, overrides]);
 
   // 表示月: 年度通し12ヶ月を常に全て表示
   const calendarMonths = useMemo(() => {
@@ -283,7 +296,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
     let normalCount = 0;
 
     active.forEach(e => {
-      const engOrders = ordersByManNo[String(e.manNo)] ?? [];
+      const engOrders = effectiveOrdersByManNo[String(e.manNo)] ?? [];
       const activeMonths = e.activeMonths ?? [];
       // 当月に稼働対象かチェック
       const isActiveThisMonth = activeMonths.length === 0 || activeMonths.includes(currentMonth);
@@ -310,7 +323,7 @@ export default function DashboardPage({ onSwitch, onGapCountChange, isAdmin = fa
       normal: normalCount,
       archived: engineers.filter(e => e.status === "archived").length,
     };
-  }, [engineers, ordersByManNo]);
+  }, [engineers, effectiveOrdersByManNo]);
 
   const prevGapRef = useRef(-1);
   useEffect(() => {

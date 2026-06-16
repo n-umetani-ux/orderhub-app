@@ -4,6 +4,8 @@ export interface OrderRecord {
   manNo: string;
   contractStart: string; // YYYY-MM-DD
   contractEnd: string;   // YYYY-MM-DD
+  uploadedAt?: string;   // ISO日時（登録日時）。dedup の世代判定キー。任意・後方互換
+  customerCode?: string; // 顧客コード。dedup のグループキー（別顧客の並行稼働を別系列に）。任意・後方互換
 }
 
 const GAP_WARN_DAYS = 14;
@@ -92,4 +94,67 @@ export function toEngineer(
     contract,
     status,
   };
+}
+
+/**
+ * 同一manNo・同一顧客で「期間が重なる」注文書のうち最新行を正とし、それに隠れる古い行を除外する。
+ * 短縮・差し替え時に古い広い行が残ってギャップを見逃すのを防ぐための前処理。
+ *
+ * - グループキー: manNo + customerCode。別顧客の並行稼働（半稼働0.5×2社など）は
+ *   別系列として保持し、誤って dedup しない。
+ * - 最新判定: 第1キー uploadedAt(ISO文字列)降順（空文字は最古扱い）、
+ *   第2キー（tiebreaker）元配列インデックス降順（後方＝新しい）。
+ * - 新しい順に貪欲採用し、既に採用した（より新しい）行と期間が重なる古い行のみ drop。
+ * - 重ならない連続契約（例: 4-6月 + 7-9月）は両方保持する。
+ * - 重なり判定式は既存と同形: aStart <= bEnd && bStart <= aEnd。
+ *
+ * カバレッジ/ギャップ計算専用の純粋関数。表示用リストには適用しないこと。
+ * @returns 採用された行のみ。元の並び順を維持して返す。
+ */
+export function selectEffectiveOrders<T extends OrderRecord>(orders: T[]): T[] {
+  // 元インデックスを保持（tiebreaker と最終的な並び順復元に使用）
+  const indexed = orders.map((o, i) => ({ o, i }));
+
+  // manNo + customerCode ごとにグループ化（customerCode 欠損は空文字で揃える）
+  const groups = new Map<string, { o: T; i: number }[]>();
+  for (const item of indexed) {
+    const key = `${String(item.o.manNo)}|${item.o.customerCode ?? ""}`;
+    const arr = groups.get(key) ?? [];
+    arr.push(item);
+    groups.set(key, arr);
+  }
+
+  const keptIndices = new Set<number>();
+
+  for (const group of groups.values()) {
+    // 新しい順にソート（uploadedAt 降順 → 同値/欠損は元index 降順）
+    const sorted = [...group].sort((a, b) => {
+      const ua = a.o.uploadedAt ?? "";
+      const ub = b.o.uploadedAt ?? "";
+      if (ua !== ub) {
+        if (ua === "") return 1;  // a が古い → 後ろへ
+        if (ub === "") return -1; // b が古い → a を前へ
+        return ua < ub ? 1 : -1;  // ISO文字列の大きい（新しい）方を前へ
+      }
+      return b.i - a.i; // 後方インデックス（新しい）を前へ
+    });
+
+    const keptInGroup: T[] = [];
+    for (const { o, i } of sorted) {
+      const start = parseDate(o.contractStart);
+      const end   = parseDate(o.contractEnd);
+      const overlapsKept = keptInGroup.some(k => {
+        const ks = parseDate(k.contractStart);
+        const ke = parseDate(k.contractEnd);
+        return start <= ke && ks <= end; // 期間が重なる
+      });
+      if (!overlapsKept) {
+        keptInGroup.push(o);
+        keptIndices.add(i);
+      }
+    }
+  }
+
+  // 元の並び順を維持して採用行のみ返す
+  return indexed.filter(item => keptIndices.has(item.i)).map(item => item.o);
 }

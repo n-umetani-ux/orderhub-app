@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { detectStatus, toEngineer, OrderRecord } from "@/lib/gap-detector";
+import { detectStatus, toEngineer, selectEffectiveOrders, OrderRecord } from "@/lib/gap-detector";
 import type { SheetsEngineer } from "@/types";
 
 // テスト用の基準日を 2026-04-04 に固定
@@ -154,5 +154,83 @@ describe("toEngineer", () => {
     ];
     const result = toEngineer(eng, orders);
     expect(result.contract).toBe("2026-05-01|2026-07-31");
+  });
+});
+
+// ─── selectEffectiveOrders ───
+
+function ord(start: string, end: string, uploadedAt = "", manNo = "170156", customerCode = ""): OrderRecord {
+  return { manNo, contractStart: start, contractEnd: end, uploadedAt, customerCode };
+}
+
+describe("selectEffectiveOrders", () => {
+  it("短縮: 旧4-9 + 新4-6 → 新4-6のみ採用（旧4-9を除外）", () => {
+    const orders = [
+      ord("2026-04-01", "2026-09-30", "2026-04-01T00:00:00Z"), // 旧（広い）
+      ord("2026-04-01", "2026-06-30", "2026-04-10T00:00:00Z"), // 新（短縮後）
+    ];
+    const result = selectEffectiveOrders(orders);
+    expect(result).toHaveLength(1);
+    expect(result[0].contractEnd).toBe("2026-06-30");
+  });
+
+  it("延長: 旧4-6 + 新4-9 → 新4-9のみ採用（旧4-6を除外）", () => {
+    const orders = [
+      ord("2026-04-01", "2026-06-30", "2026-04-01T00:00:00Z"), // 旧
+      ord("2026-04-01", "2026-09-30", "2026-04-10T00:00:00Z"), // 新（延長後）
+    ];
+    const result = selectEffectiveOrders(orders);
+    expect(result).toHaveLength(1);
+    expect(result[0].contractEnd).toBe("2026-09-30");
+  });
+
+  it("連続: 4-6 + 7-9（重ならない）→ 両方保持", () => {
+    const orders = [
+      ord("2026-04-01", "2026-06-30", "2026-04-01T00:00:00Z"),
+      ord("2026-07-01", "2026-09-30", "2026-06-20T00:00:00Z"),
+    ];
+    const result = selectEffectiveOrders(orders);
+    expect(result).toHaveLength(2);
+    expect(result.map(o => o.contractEnd)).toEqual(["2026-06-30", "2026-09-30"]); // 元の並び順を維持
+  });
+
+  it("uploadedAt欠損フォールバック: 両方空 → 配列後方を新しいとみなす（旧4-9を除外）", () => {
+    const orders = [
+      ord("2026-04-01", "2026-09-30", ""), // 配列前方＝古い扱い
+      ord("2026-04-01", "2026-06-30", ""), // 配列後方＝新しい扱い
+    ];
+    const result = selectEffectiveOrders(orders);
+    expect(result).toHaveLength(1);
+    expect(result[0].contractEnd).toBe("2026-06-30");
+  });
+
+  it("3件チェーン: 4-9 / 4-6 / 7-9 混在 → 重なる古い4-9のみ除外、連続は保持", () => {
+    const orders = [
+      ord("2026-04-01", "2026-09-30", "2026-04-01T00:00:00Z"), // 旧（最古・広い）
+      ord("2026-04-01", "2026-06-30", "2026-04-10T00:00:00Z"), // 新（短縮後）
+      ord("2026-07-01", "2026-09-30", "2026-06-20T00:00:00Z"), // 新（連続）
+    ];
+    const result = selectEffectiveOrders(orders);
+    expect(result).toHaveLength(2);
+    expect(result.map(o => o.contractEnd).sort()).toEqual(["2026-06-30", "2026-09-30"]);
+  });
+
+  it("多顧客並行: 同一manNo・顧客X(4-6) + 顧客Y(5-9・重なる) → 別顧客なので両方保持", () => {
+    const orders = [
+      ord("2026-04-01", "2026-06-30", "2026-04-01T00:00:00Z", "170156", "C0001"), // 顧客X
+      ord("2026-05-01", "2026-09-30", "2026-04-10T00:00:00Z", "170156", "C0002"), // 顧客Y（期間は重なる）
+    ];
+    const result = selectEffectiveOrders(orders);
+    expect(result).toHaveLength(2); // customerCode が異なるため dedup されない
+  });
+
+  it("同一顧客内の短縮: 顧客X 旧4-9 + 新4-6 → 新4-6のみ採用（顧客内 dedup は効く）", () => {
+    const orders = [
+      ord("2026-04-01", "2026-09-30", "2026-04-01T00:00:00Z", "170156", "C0001"), // 旧
+      ord("2026-04-01", "2026-06-30", "2026-04-10T00:00:00Z", "170156", "C0001"), // 新（短縮後）
+    ];
+    const result = selectEffectiveOrders(orders);
+    expect(result).toHaveLength(1);
+    expect(result[0].contractEnd).toBe("2026-06-30");
   });
 });
