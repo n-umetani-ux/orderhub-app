@@ -74,7 +74,7 @@ export function validateOrder(params: {
     o.contractStart === startDate && o.contractEnd === endDate
   );
   if (isDuplicate) {
-    warnings.push({ level: "error", message: "同じ契約期間の注文書が既に登録されています" });
+    warnings.push({ level: "warn", message: "同じ契約期間の注文書が既に登録されています。差し替えの場合は登録後に古い方を削除してください" });
   }
 
   // 4. 期間の重複チェック
