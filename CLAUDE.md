@@ -1,4 +1,4 @@
-作成日: 2026-04-02 / 最終更新: 2026-06-15
+作成日: 2026-04-02 / 最終更新: 2026-06-16
 
 \# OrderHub - 注文書管理システム
 
@@ -362,6 +362,28 @@ I列(売上)、O列(原価)、X列(粗利) および J〜W列は API層で完全
 
 
 
+\### 2026-06-16(火)本番障害対応・firebase-admin撤廃
+
+\*\*#1で導入したfirebase-adminが本番でロードできず /api/settings が500だった\*\*
+
+\- 症状: 本番で管理者設定・オーバーライドが全て使えない(管理者と認識されない)
+
+\- 真因: firebase-admin が Vercel(Next16/Turbopack)で外部モジュールとしてロードできず、モジュール評価時クラッシュ(Failed to load external module)。#1デプロイ直後から本番では動いていなかった(朝の確認は攻撃系401のみで、正規ユーザーの本番動作確認が不十分だった)
+
+\- 切り分け: 他APIをプローブ→firebase-admin依存の/api/settingsのみ500、googleapis系は正常と特定
+
+\- 試行: serverExternalPackages(googleapisは解決・firebase-adminはダメ)→ outputFileTracingIncludes(効かず)→ firebase-admin撤廃を決断
+
+\- 根本解決: verifyAuthをfetch(Identity Toolkit accounts:lookup)方式に刷新。firebase-admin依存を完全撤廃(125パッケージ削除)。バンドル問題が構造的に消滅
+
+\- 副次: email\_verifiedチェックを追加し#1のHIGH残課題も同時解消。可用性対策(401/500のステータス分離・fetch5秒タイムアウト)も実装
+
+\- 検証: 本番で /api/settings がJSON応答、管理者設定・オーバーライド復活を確認
+
+\- コミット: a3f33ba(outputFileTracing・効果なし)→ 最終fix(fetch化・e3f0fcb)
+
+
+
 \### 2026-06-15(月)複数PDF登録の単数化・自宅PC環境構築
 
 \*\*自宅PC開発環境を構築\*\*
@@ -432,7 +454,7 @@ I列(売上)、O列(原価)、X列(粗利) および J〜W列は API層で完全
 
 \*\*残課題(次回)\*\*
 
-\- \[ \] email\_verified チェック未適用(security-guidance HIGH指摘): verifyAuth に1行追加+Firebaseコンソールで Google 以外のサインインプロバイダ(特にメール/パスワード)が無効であることを確認
+\- \[x] email\_verified チェック未適用(security-guidance HIGH指摘) → 2026-06-16解消: verifyAuthのfetch化(accounts:lookup)時に emailVerified!==true で弾く実装を追加済み。※Firebaseコンソールで Google 以外のサインインプロバイダ(特にメール/パスワード)が無効であることの確認は継続推奨
 
 \- \[ \] code-review 残指摘(Bearer大文字小文字非区別・env未設定時の明示ログ)→ #2横展開時にまとめて対応
 
@@ -817,6 +839,14 @@ I列(売上)、O列(原価)、X列(粗利) および J〜W列は API層で完全
 \## 未解決の課題
 
 
+
+\- \[ ] 【次回・教訓を汎用ルールへ反映】今回の本番障害の教訓(①ローカルbuild通過≠本番動作、新規ライブラリは本番確認必須 ②セキュリティ修正は正規ユーザーの本番疎通も確認 ③ライブラリと環境の相性が悪ければ非依存方式に切替)を MY_DEV_RULES.md に追記する。ただし現在MY_DEV_RULES.mdが OneDrive3箇所に同一散在しており、正本を1つに決める整理が先(2026-06-16)
+
+\- \[ ] MY_DEV_RULES.md がOneDrive 3箇所(デスクトップ/ドキュメント/ドキュメント\【業務】勉強・AI)に同一コピーで散在。今回(2026-06-16)は3つ揃えて教訓を追記したが、正本を1つに決めて統合する整理が必要。プロジェクト別の DEV_RULES_注文書自動化.md / DEV_RULES_TMC納品システム.md も近くに存在
+
+\- \[ ] verifyAuthはfetch(accounts:lookup)方式に変更済み。リクエスト毎にGoogle外部呼び出しが入る(設定画面アクセス時のみ・実用上問題なし)。将来オフライン検証(jose等)に変える選択肢は残す(2026-06-16)
+
+\- \[ ] firebase-admin.ts はファイル名が実態(firebase-admin非依存)と不一致。リネーム検討(import参照の変更が伴うため別タスク)(2026-06-16)
 
 \- \[ ] 【UAT発見・要対処】同名/重複時に「続行」できず登録不可(2026-06-15)。症状: 登録前チェックで「戻って修正する」しか選べず、2件目保存ができない。仕様(SPEC)では同名は「上書きせず2件目保存・ユーザー確認で続行可」が設計意図(差し替え・あえての2重登録など正当ケースを想定)。要切り分け: 同名警告そのものが続行不可なのか、同一契約期間エラー(🚫)の巻き添えで続行ボタンに到達できないのか。コード調査が必要。関連: src/app/upload/page.tsx の登録前チェック
 
