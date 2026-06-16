@@ -15,6 +15,7 @@ const MONTHLY_SHEET_IDS: Record<string, string> = {
   "2026-04": "1kXz9Q4Puk0sE3hwfgly4Ny7Zm_YNVv2LmiQjXIBVOSg",
   "2026-05": "17QxNSoW5XTB0F9i5yl55FfINQu9W_702ltF0guVwGw4",
   "2026-06": "1MM6JJhyO7ZQ08sckbDGEImc1tiuv98E7BdEoE40W3W0",
+  "2026-07": "1gUyeepYyOF-a2ql87LXwwMv261w99iBgUlpr4pqkcoM",
 };
 
 // 稼働一覧のフォールバック（環境変数）
