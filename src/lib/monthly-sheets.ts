@@ -29,9 +29,15 @@ const MIN_MONTH = "2026-04";
 
 /**
  * 現在参照すべき稼働一覧スプレッドシートIDの一覧を返す
- * MIN_MONTH から当月 + 翌月までの全月（MONTHLY_SHEET_IDS に登録済みのもののみ）
+ * MIN_MONTH から当月 + 翌月までの全月。各月のIDは以下の3段で解決する:
+ *   1. overrides[月]（設定シート由来。最優先）
+ *   2. MONTHLY_SHEET_IDS[月]（ハードコード）
+ *   3. DEFAULT_SHEET_ID（env GOOGLE_SHEETS_ID。当月のみ）
+ *
+ * overrides を省略すると 2→3 のみ（=従来の挙動と完全一致／後方互換）。
+ * 純関数（関数内でI/Oはしない）。overrides は呼び出し側が設定シートから読んで渡す。
  */
-export function getActiveSheetIds(): { id: string; label: string; yearMonth: string }[] {
+export function getActiveSheetIds(overrides?: Record<string, string>): { id: string; label: string; yearMonth: string }[] {
   // JST で当月キーを取得
   const fmt = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Tokyo",
@@ -55,7 +61,12 @@ export function getActiveSheetIds(): { id: string; label: string; yearMonth: str
     const [cy, cm] = cursor.split("-").map(Number);
     const label = `${cm}月`;
 
-    if (MONTHLY_SHEET_IDS[cursor]) {
+    // 3段マージ: overrides → ハードコード → env(当月のみ)
+    // ※ overrides[cursor] が空文字の場合は falsy なのでハードコードへフォールバックする
+    //    （UI側で月を「無効化」する際は空文字を保存する想定。filterSheetKeys で除外済みだが二重に安全）
+    if (overrides?.[cursor]) {
+      result.push({ id: overrides[cursor], label, yearMonth: cursor });
+    } else if (MONTHLY_SHEET_IDS[cursor]) {
       result.push({ id: MONTHLY_SHEET_IDS[cursor], label, yearMonth: cursor });
     } else if (cursor === currentKey && DEFAULT_SHEET_ID) {
       // 当月のみ環境変数フォールバック

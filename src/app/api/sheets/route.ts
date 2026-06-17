@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
 import { toEngineer, selectEffectiveOrders, OrderRecord } from "@/lib/gap-detector";
 import { getActiveSheetIds, getOrderLedgerSheetId } from "@/lib/monthly-sheets";
+import { readSettingsMap, filterSheetKeys } from "@/lib/settings";
 
 const LEDGER_SHEET_ID = getOrderLedgerSheetId();
 
@@ -253,8 +254,12 @@ export async function GET(req: NextRequest) {
 
     const sheetReadErrors: { label: string; id: string; error: string }[] = [];
     try {
-      // 稼働一覧スプレッドシートを読み込み
-      const activeSheets = getActiveSheetIds();
+      // 設定シートから月別シートIDのオーバーライドを取得
+      // 失敗しても .catch で空に縮退 → getActiveSheetIds はハードコードへフォールバック（全停止しない）
+      const settings = await readSettingsMap(sheets).catch((): Record<string, string> => ({}));
+      const overrides = filterSheetKeys(settings);
+      // 稼働一覧スプレッドシートを読み込み（overrides 最優先・無ければハードコード/env）
+      const activeSheets = getActiveSheetIds(overrides);
       console.log("[sheets API] 参照スプレッドシート:", activeSheets.map(s => s.label));
       const tempLoadedMonths: string[] = [];
       const tempActiveMonths = new Map<string, Set<string>>();
