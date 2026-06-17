@@ -362,6 +362,48 @@ I列(売上)、O列(原価)、X列(粗利) および J〜W列は API層で完全
 
 
 
+\### 2026-06-16(火)午後 MONTHLY\_SHEET\_IDS のUI化・仕様書ページ・ドキュメント整理
+
+\*\*MONTHLY\_SHEET\_IDS のUI化（Phase 1: バックエンド・コミット 169c8a7）\*\*
+
+\- 発端: 7月シート登録時に「毎月ハードコードへ手追記＋コミット＆デプロイ」の運用負荷を再確認。Phase 6 前に解消したい課題として着手
+
+\- 方針: 管理者1人運用・デプロイ不要を要件に、案Y（UI化）をベースにした中間案・方式Bを採用。getActiveSheetIds は純関数のまま overrides を引数で受け取り、I/O化しない（読み取り失敗で全停止を避ける）
+
+\- 実装: src/lib/settings.ts 新設（readSettingsMap / filterSheetKeys）。getActiveSheetIds(overrides?) を3段マージ化（設定シート → ハードコード → env当月）。sheets/route.ts で設定マップを読んで渡す（.catch で握りつぶし）
+
+\- 安全性: 設定読み取り失敗時は overrides 空 → ハードコードへ確実に縮退（テストで getActiveSheetIds({})＝getActiveSheetIds() を担保）。最悪時も現行動作に縮退
+
+\- 検証: tsc/build/vitest 49件全通過。本番確認: 設定シート空でも4〜7月正常表示（フォールバック実証）✅
+
+\*\*MONTHLY\_SHEET\_IDS のUI化（Phase 2: 登録UI＋検証エンドポイント・コミット bf82aa4）\*\*
+
+\- Sidebar 管理者設定モーダルに「月別シートID」セクション追加（一覧／年月ドロップダウン／検証付き追加／無効化）
+
+\- 新規 POST /api/sheets/validate: 管理者ゲート（verifyAuth + adminEmails）付き。spreadsheets.get でメタデータのみ取得し稼働表タブの存在を確認
+
+\- code-review/security で Finding 対処: ①検証のタブ判定を実読み取りと同じ SHEET\_LOCS 完全一致に揃え src/lib/sheet-locations.ts に単一正本化（検証は通るが実読みで0名＝無言ギャップ化を根治）②sheetId を GET→POST body 化しログ残留を回避 ③年月ドロップダウンで形式ミスを構造的に防止
+
+\- 残課題（低優先・記録のみ）: validate のサーバ側文字種チェック未実装（admin限定で実害最小）、トークン失効時の403誤表示（既存挙動）
+
+\- 検証: tsc/build/vitest 56件全通過。本番確認: 正しいID登録成功・誤ID/別シートは検証で弾く・既存ダッシュボード無事 ✅。テスト後の7月override は無効化して撤去（既存月はハードコード運用に戻す）
+
+\*\*管理者向け仕様書ページ追加（会社説明用・コミット 0ecc438）\*\*
+
+\- 目的: 非エンジニアの管理者が、会社からの技術・費用・セキュリティの説明要求に仕様書を見ながら対応できるように
+
+\- 方式: 新ルートではなく screen="spec" 追加（既存の単一ページ切替に準拠）。内容は構造化データ（spec-content.ts・9章）。新規ライブラリ非依存（firebase-admin の教訓）。isAdmin 二重ゲートで管理者限定
+
+\- 内容: システム概要／技術スタック／認証・API設計／コスト／権限設計／データ管理・機密保護／主な機能／開発状況／既知の改善予定。技術者が読む前提のトーン
+
+\*\*ドキュメント整理\*\*
+
+\- SPEC\_AND\_OPERATIONS.md をリポジトリ直下に初配置しgit管理下に（従来claude.aiプロジェクトのみで宙に浮いていた正本を実体化・コミット 1829a80）
+
+\- ルート OrderHub\\CLAUDE.md（6/10版・git管理外の孤立ファイル）を削除。①正本（orderhub-app\\CLAUDE.md）が内包し固有情報なしを確認のうえ削除。CLAUDE.md を正本1つに統一
+
+\- 【次回】MY\_DEV\_RULES.md の実体化が未了（SPEC同様claude.aiのみ・OneDrive3箇所散在）。リポジトリ配置と正本統一を検討
+
 \### 2026-06-16(火)同名続行修正・7月シート登録・dedup実装
 
 \*\*UAT課題「同名/重複時に続行できない」を解消（コミット a49a749→ a5b748c）\*\*
