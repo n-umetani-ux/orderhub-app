@@ -3,8 +3,13 @@
 import { useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useAuth } from "@/lib/auth-context";
+import { extractSheetId } from "@/lib/sheet-id";
 
 type Screen = "dashboard" | "upload";
+
+// 月別シートID登録フォームの選択肢
+const YEAR_OPTIONS = ["2026", "2027"];
+const MONTH_OPTIONS = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"];
 
 interface SidebarProps {
   screen: Screen;
@@ -28,6 +33,14 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
   const [adminInput, setAdminInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
+
+  // 月別 稼働一覧シートID
+  const [sheetOverrides, setSheetOverrides] = useState<Record<string, string>>({});
+  const [newYear, setNewYear] = useState(YEAR_OPTIONS[0]);
+  const [newMonth, setNewMonth] = useState("");
+  const [newSheetInput, setNewSheetInput] = useState("");
+  const [validating, setValidating] = useState(false);
+  const [sheetMsg, setSheetMsg] = useState<string | null>(null);
 
   const userEmail = user?.email ?? "";
 
@@ -56,6 +69,12 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
         setAdminEmails(d.settings.adminEmails);
         setAdminInput(d.settings.adminEmails);
       }
+      // 月別シートID（sheet_YYYY-MM）を抽出。空値は無効化済みなので除外
+      const overrides: Record<string, string> = {};
+      for (const [k, v] of Object.entries((d.settings ?? {}) as Record<string, string>)) {
+        if (k.startsWith("sheet_") && v) overrides[k.slice("sheet_".length)] = v;
+      }
+      setSheetOverrides(overrides);
     } catch { /* ignore */ }
   }, [userEmail, accessToken, getIdToken]);
 
@@ -104,6 +123,61 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
       setSaveMsg(err instanceof Error ? err.message : "保存に失敗しました");
     } finally {
       setSaving(false);
+    }
+  };
+
+  // 月別シートID: 検証してから保存（Finding #1対策）
+  const handleAddSheet = async () => {
+    setSheetMsg(null);
+    if (!newMonth) { setSheetMsg("月を選択してください"); return; }
+    const ym = `${newYear}-${newMonth}`;
+    const id = extractSheetId(newSheetInput);
+    if (!id) { setSheetMsg("シートID または URL が不正です"); return; }
+
+    setValidating(true);
+    try {
+      const idToken = await getIdToken();
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (idToken) headers["Authorization"] = `Bearer ${idToken}`;
+      if (accessToken) headers["x-google-access-token"] = accessToken;
+
+      // 保存前に検証（読めて稼働表タブがあるか）。sheetId はボディで送る（ログ残留回避）
+      const r = await fetch("/api/sheets/validate", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ sheetId: id }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.ok) {
+        setSheetMsg(d.reason ?? d.error ?? "検証に失敗しました");
+        return;
+      }
+
+      // 検証OK → 保存
+      await saveSetting(`sheet_${ym}`, id);
+      setSheetOverrides(prev => ({ ...prev, [ym]: id }));
+      setNewSheetInput("");
+      setSheetMsg(`${ym} を登録しました${d.title ? `（${d.title}）` : ""}`);
+    } catch (err) {
+      setSheetMsg(err instanceof Error ? err.message : "登録に失敗しました");
+    } finally {
+      setValidating(false);
+    }
+  };
+
+  // 月別シートID: 無効化（空保存 → filterSheetKeys が除外しハードコードへフォールバック）
+  const handleDisableSheet = async (ym: string) => {
+    setSheetMsg(null);
+    try {
+      await saveSetting(`sheet_${ym}`, "");
+      setSheetOverrides(prev => {
+        const next = { ...prev };
+        delete next[ym];
+        return next;
+      });
+      setSheetMsg(`${ym} を無効化しました`);
+    } catch (err) {
+      setSheetMsg(err instanceof Error ? err.message : "無効化に失敗しました");
     }
   };
 
@@ -206,6 +280,80 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
                 className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
                 style={{ color: "#111827", backgroundColor: "#fff" }}
               />
+            </div>
+
+            {/* Monthly sheet IDs setting */}
+            <div className="mb-5">
+              <label className="block text-sm font-medium mb-1" style={{ color: "#374151" }}>
+                月別 稼働一覧シートID
+              </label>
+              <p className="text-xs mb-2" style={{ color: "#6b7280" }}>
+                月ごとの稼働一覧スプレッドシートを登録します（保存前に読めるか検証します）
+              </p>
+
+              {/* 登録済み一覧 */}
+              {Object.keys(sheetOverrides).length > 0 && (
+                <div className="mb-3 space-y-1">
+                  {Object.entries(sheetOverrides).sort(([a], [b]) => a.localeCompare(b)).map(([ym, id]) => (
+                    <div key={ym} className="flex items-center gap-2 text-xs">
+                      <span className="font-mono font-semibold" style={{ color: "#111827" }}>{ym}</span>
+                      <span className="flex-1 truncate font-mono" style={{ color: "#6b7280" }}>{id}</span>
+                      <button
+                        onClick={() => handleDisableSheet(ym)}
+                        className="px-2 py-0.5 rounded border border-slate-300 text-xs hover:bg-slate-50 shrink-0"
+                        style={{ color: "#dc2626" }}
+                      >
+                        無効化
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* 追加フォーム */}
+              <div className="flex items-center gap-2 mb-2">
+                <select
+                  value={newYear}
+                  onChange={e => setNewYear(e.target.value)}
+                  className="px-2 py-2 rounded-lg border border-slate-300 text-sm"
+                  style={{ color: "#111827", backgroundColor: "#fff" }}
+                >
+                  {YEAR_OPTIONS.map(y => <option key={y} value={y}>{y}年</option>)}
+                </select>
+                <select
+                  value={newMonth}
+                  onChange={e => setNewMonth(e.target.value)}
+                  className="px-2 py-2 rounded-lg border border-slate-300 text-sm"
+                  style={{ color: "#111827", backgroundColor: "#fff" }}
+                >
+                  <option value="">月</option>
+                  {MONTH_OPTIONS.map(m => <option key={m} value={m}>{parseInt(m, 10)}月</option>)}
+                </select>
+              </div>
+              <input
+                value={newSheetInput}
+                onChange={e => setNewSheetInput(e.target.value)}
+                placeholder="シートID or URL"
+                className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm mb-2"
+                style={{ color: "#111827", backgroundColor: "#fff" }}
+              />
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleAddSheet}
+                  disabled={validating}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                >
+                  {validating ? "検証中…" : "検証して追加"}
+                </button>
+                {sheetMsg && (
+                  <span
+                    className="text-xs"
+                    style={{ color: sheetMsg.includes("登録") || sheetMsg.includes("無効化") ? "#059669" : "#dc2626" }}
+                  >
+                    {sheetMsg}
+                  </span>
+                )}
+              </div>
             </div>
 
             <div className="flex items-center gap-3">

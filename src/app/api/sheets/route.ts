@@ -3,6 +3,7 @@ import { google } from "googleapis";
 import { toEngineer, selectEffectiveOrders, OrderRecord } from "@/lib/gap-detector";
 import { getActiveSheetIds, getOrderLedgerSheetId } from "@/lib/monthly-sheets";
 import { readSettingsMap, filterSheetKeys } from "@/lib/settings";
+import { SHEET_LOCS, type Loc } from "@/lib/sheet-locations";
 
 const LEDGER_SHEET_ID = getOrderLedgerSheetId();
 
@@ -23,8 +24,6 @@ const HEADER_PATTERNS = ["manNo.", "No.", "PJcode"];
 const CACHE_TTL_MS = 72 * 60 * 60 * 1000; // 72時間
 const CACHE_SHEET = "稼働キャッシュ";
 const CACHE_HEADERS = ["manNo", "kubun", "name", "activity", "ending", "customer", "tantou", "customerCode", "loc", "activeMonths", "cachedAt", "loadedMonths"];
-
-type Loc = "東京" | "大阪" | "福岡";
 
 interface ParsedEngineer {
   manNo: string;
@@ -171,12 +170,6 @@ async function readL2Cache(
     return null;
   }
 }
-
-const SHEET_LOCS: Record<string, Loc> = {
-  "稼働表（東京）": "東京",
-  "稼働表（大阪）": "大阪",
-  "稼働表（福岡）": "福岡",
-};
 
 // 機密列（I,J-W,X = 8,9-22,23）
 const SENSITIVE_COLS = new Set([8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]);
