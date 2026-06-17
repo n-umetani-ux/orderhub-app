@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { useAuth } from "@/lib/auth-context";
 import { extractSheetId } from "@/lib/sheet-id";
 
-type Screen = "dashboard" | "upload";
+type Screen = "dashboard" | "upload" | "spec";
 
 // 月別シートID登録フォームの選択肢
 const YEAR_OPTIONS = ["2026", "2027"];
@@ -229,6 +229,19 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
           <span className="flex-1">注文書PDF フォルダ</span>
           <span className="text-[10px]" style={{ color: "#94a3b8", WebkitTextFillColor: "#94a3b8" }}>↗</span>
         </a>
+        {/* Spec (管理者のみ表示) */}
+        {isAdmin && (
+          <button
+            onClick={() => onNavigate("spec")}
+            className={`flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-sm text-left transition-all
+              ${screen === "spec"
+                ? "bg-blue-500/15 text-blue-300 font-semibold"
+                : "text-slate-400 hover:bg-white/5 hover:text-slate-200"}`}
+          >
+            <span className="text-base">📄</span>
+            <span className="flex-1">仕様書</span>
+          </button>
+        )}
         {/* Settings (管理者のみ表示) */}
         {isAdmin && (
           <button

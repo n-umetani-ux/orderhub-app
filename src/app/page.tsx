@@ -6,9 +6,10 @@ import { useAuth } from "@/lib/auth-context";
 import { Sidebar } from "@/components/ui/Sidebar";
 import DashboardPage from "@/app/dashboard/page";
 import UploadPage from "@/app/upload/page";
+import SpecPage from "@/components/SpecPage";
 import { Engineer } from "@/types";
 
-type Screen = "dashboard" | "upload";
+type Screen = "dashboard" | "upload" | "spec";
 
 export default function Home() {
   const { user, loading } = useAuth();
@@ -50,6 +51,10 @@ export default function Home() {
         )}
         {screen === "upload" && (
           <UploadPage prefill={prefill} onBack={() => handleNavigate("dashboard")} />
+        )}
+        {/* 仕様書は管理者のみ（Sidebarのメニュー表示に加え、ここでも isAdmin で二重ゲート） */}
+        {screen === "spec" && isAdmin && (
+          <SpecPage />
         )}
       </main>
     </div>
