@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useAuth } from "@/lib/auth-context";
 import { extractSheetId } from "@/lib/sheet-id";
+import { extractFolderId } from "@/lib/folder-id";
 
 type Screen = "dashboard" | "upload" | "spec";
 
@@ -42,6 +43,13 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
   const [validating, setValidating] = useState(false);
   const [sheetMsg, setSheetMsg] = useState<string | null>(null);
 
+  // 電帳法 一時とりまとめフォルダ（月次締め後の注文書PDF移動先）
+  const [closingFolderId, setClosingFolderId] = useState("");
+  const [closingFolderName, setClosingFolderName] = useState("");
+  const [closingInput, setClosingInput] = useState("");
+  const [closingValidating, setClosingValidating] = useState(false);
+  const [closingMsg, setClosingMsg] = useState<string | null>(null);
+
   const userEmail = user?.email ?? "";
 
   // 設定を読み込み（管理者判定含む）
@@ -75,6 +83,11 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
         if (k.startsWith("sheet_") && v) overrides[k.slice("sheet_".length)] = v;
       }
       setSheetOverrides(overrides);
+      // 電帳法 一時とりまとめフォルダID（保存済みならIDを表示。フォルダ名は検証時のみ取得可能）
+      if (d.settings?.closing_archive_folder_id) {
+        setClosingFolderId(d.settings.closing_archive_folder_id);
+        setClosingInput(d.settings.closing_archive_folder_id);
+      }
     } catch { /* ignore */ }
   }, [userEmail, accessToken, getIdToken]);
 
@@ -178,6 +191,43 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
       setSheetMsg(`${ym} を無効化しました`);
     } catch (err) {
       setSheetMsg(err instanceof Error ? err.message : "無効化に失敗しました");
+    }
+  };
+
+  // 電帳法 一時とりまとめフォルダ: Drive で存在＆フォルダ種別を検証してから保存
+  const handleSaveClosingFolder = async () => {
+    setClosingMsg(null);
+    const id = extractFolderId(closingInput);
+    if (!id) { setClosingMsg("❌ フォルダID または URL が不正です"); return; }
+
+    setClosingValidating(true);
+    try {
+      const idToken = await getIdToken();
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (idToken) headers["Authorization"] = `Bearer ${idToken}`;
+      if (accessToken) headers["x-google-access-token"] = accessToken;
+
+      // 保存前に検証（フォルダとして存在するか）。folderId はボディで送る（ログ残留回避）
+      const r = await fetch("/api/drive/validate-folder", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ folderId: id }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.ok) {
+        setClosingMsg(`❌ ${d.error ?? "フォルダが見つかりません。IDを確認してください"}`);
+        return;
+      }
+
+      // 検証OK → 保存
+      await saveSetting("closing_archive_folder_id", id);
+      setClosingFolderId(id);
+      setClosingFolderName(d.name ?? "");
+      setClosingMsg(`✅ 保存しました（フォルダ名: ${d.name ?? id}）`);
+    } catch (err) {
+      setClosingMsg(`❌ ${err instanceof Error ? err.message : "保存に失敗しました"}`);
+    } finally {
+      setClosingValidating(false);
     }
   };
 
@@ -364,6 +414,51 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
                     style={{ color: sheetMsg.includes("登録") || sheetMsg.includes("無効化") ? "#059669" : "#dc2626" }}
                   >
                     {sheetMsg}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* 電帳法 一時とりまとめフォルダ setting */}
+            <div className="mb-5">
+              <label className="block text-sm font-medium mb-1" style={{ color: "#374151" }}>
+                電帳法 一時とりまとめフォルダ
+              </label>
+              <p className="text-xs mb-2" style={{ color: "#6b7280" }}>
+                月次締め後、注文書PDFの移動先となる共有ドライブ上のフォルダIDを設定します
+              </p>
+
+              {/* 現在の設定値 */}
+              {closingFolderId && (
+                <div className="mb-2 text-xs">
+                  <span style={{ color: "#6b7280" }}>現在: </span>
+                  <span className="font-mono" style={{ color: "#111827" }}>
+                    {closingFolderName || closingFolderId}
+                  </span>
+                </div>
+              )}
+
+              <input
+                value={closingInput}
+                onChange={e => setClosingInput(e.target.value)}
+                placeholder="フォルダID or URL"
+                className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm mb-2"
+                style={{ color: "#111827", backgroundColor: "#fff" }}
+              />
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleSaveClosingFolder}
+                  disabled={closingValidating}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                >
+                  {closingValidating ? "検証中…" : "検証して保存"}
+                </button>
+                {closingMsg && (
+                  <span
+                    className="text-xs"
+                    style={{ color: closingMsg.startsWith("✅") ? "#059669" : "#dc2626" }}
+                  >
+                    {closingMsg}
                   </span>
                 )}
               </div>
