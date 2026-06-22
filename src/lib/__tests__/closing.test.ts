@@ -1,0 +1,132 @@
+import { describe, it, expect } from "vitest";
+import {
+  isValidMonthKey,
+  closingStatusKey,
+  getClosingMonths,
+  orderCoversMonth,
+  computeMonthlyGapCounts,
+  parseClosingStatusValue,
+  buildClosingStatusValue,
+  type ClosingEngineer,
+} from "@/lib/closing";
+import { OrderRecord } from "@/lib/gap-detector";
+
+describe("isValidMonthKey", () => {
+  it("YYYY-MM（01-12）を許可する", () => {
+    expect(isValidMonthKey("2026-04")).toBe(true);
+    expect(isValidMonthKey("2026-12")).toBe(true);
+    expect(isValidMonthKey("2026-01")).toBe(true);
+  });
+  it("形式違い・範囲外は拒否する", () => {
+    expect(isValidMonthKey("2026-13")).toBe(false);
+    expect(isValidMonthKey("2026-00")).toBe(false);
+    expect(isValidMonthKey("2026-4")).toBe(false);
+    expect(isValidMonthKey("2026/04")).toBe(false);
+    expect(isValidMonthKey("")).toBe(false);
+    expect(isValidMonthKey("abc")).toBe(false);
+  });
+});
+
+describe("closingStatusKey", () => {
+  it("接頭辞付きのキーを返す", () => {
+    expect(closingStatusKey("2026-04")).toBe("closing_status:2026-04");
+  });
+});
+
+describe("getClosingMonths", () => {
+  it("2026-04 から当月まで両端含めて昇順で返す", () => {
+    expect(getClosingMonths("2026-06")).toEqual(["2026-04", "2026-05", "2026-06"]);
+  });
+  it("当月が開始月と同じなら1件", () => {
+    expect(getClosingMonths("2026-04")).toEqual(["2026-04"]);
+  });
+  it("年をまたぐ", () => {
+    expect(getClosingMonths("2027-01")).toEqual([
+      "2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09",
+      "2026-10", "2026-11", "2026-12", "2027-01",
+    ]);
+  });
+  it("当月が開始月より前なら空", () => {
+    expect(getClosingMonths("2026-03")).toEqual([]);
+  });
+});
+
+describe("orderCoversMonth", () => {
+  const o = (s: string, e: string): OrderRecord => ({ manNo: "1", contractStart: s, contractEnd: e });
+  it("契約期間が月と重なればカバー", () => {
+    expect(orderCoversMonth(o("2026-04-01", "2026-06-30"), "2026-05")).toBe(true);
+    expect(orderCoversMonth(o("2026-04-15", "2026-04-20"), "2026-04")).toBe(true);
+  });
+  it("月初・月末の端をまたぐケースもカバー", () => {
+    expect(orderCoversMonth(o("2026-05-31", "2026-07-01"), "2026-06")).toBe(true);
+  });
+  it("重ならなければ非カバー", () => {
+    expect(orderCoversMonth(o("2026-04-01", "2026-04-30"), "2026-05")).toBe(false);
+  });
+  it("日付欠損は非カバー", () => {
+    expect(orderCoversMonth(o("", "2026-06-30"), "2026-05")).toBe(false);
+  });
+});
+
+describe("computeMonthlyGapCounts", () => {
+  const months = ["2026-04", "2026-05"];
+
+  it("注文書なしの稼働者はギャップ、ありはカバー", () => {
+    const engineers: ClosingEngineer[] = [
+      { manNo: "100001", activeMonths: ["2026-04", "2026-05"] }, // ギャップ
+      { manNo: "100002", activeMonths: ["2026-04", "2026-05"] }, // 4-5月カバー
+    ];
+    const orders: Record<string, OrderRecord[]> = {
+      "100002": [{ manNo: "100002", contractStart: "2026-04-01", contractEnd: "2026-05-31" }],
+    };
+    expect(computeMonthlyGapCounts(engineers, orders, months)).toEqual({ "2026-04": 1, "2026-05": 1 });
+  });
+
+  it("その月に非稼働ならギャップに数えない", () => {
+    const engineers: ClosingEngineer[] = [
+      { manNo: "100001", activeMonths: ["2026-05"] }, // 4月は対象外
+    ];
+    expect(computeMonthlyGapCounts(engineers, {}, months)).toEqual({ "2026-04": 0, "2026-05": 1 });
+  });
+
+  it("activeMonths 空は全月稼働扱い", () => {
+    const engineers: ClosingEngineer[] = [{ manNo: "100001", activeMonths: [] }];
+    expect(computeMonthlyGapCounts(engineers, {}, months)).toEqual({ "2026-04": 1, "2026-05": 1 });
+  });
+
+  it("アーカイブ済みは除外", () => {
+    const engineers: ClosingEngineer[] = [{ manNo: "100001", activeMonths: ["2026-04", "2026-05"] }];
+    expect(computeMonthlyGapCounts(engineers, {}, months, new Set(["100001"]))).toEqual({ "2026-04": 0, "2026-05": 0 });
+  });
+
+  it("dedup: 短縮で隠れる古い行は無視され、ギャップが顕在化する", () => {
+    // 4-9月の古い行を、後から登録した4-6月の新しい行が上書き → 7月以降は非カバー
+    const engineers: ClosingEngineer[] = [{ manNo: "100001", customerCode: "C1", activeMonths: ["2026-06", "2026-07"] }];
+    const orders: Record<string, OrderRecord[]> = {
+      "100001": [
+        { manNo: "100001", customerCode: "C1", contractStart: "2026-04-01", contractEnd: "2026-09-30", uploadedAt: "2026-04-01T00:00:00Z" },
+        { manNo: "100001", customerCode: "C1", contractStart: "2026-04-01", contractEnd: "2026-06-30", uploadedAt: "2026-06-01T00:00:00Z" },
+      ],
+    };
+    const result = computeMonthlyGapCounts(engineers, orders, ["2026-06", "2026-07"]);
+    expect(result).toEqual({ "2026-06": 0, "2026-07": 1 });
+  });
+});
+
+describe("parseClosingStatusValue / buildClosingStatusValue", () => {
+  it("done:{ISO}:{email} をパースできる（ISOのコロンを保持）", () => {
+    const parsed = parseClosingStatusValue("done:2026-06-22T10:00:00.000Z:ume@beat-tech.co.jp");
+    expect(parsed).toEqual({ closedAt: "2026-06-22T10:00:00.000Z", closedBy: "ume@beat-tech.co.jp" });
+  });
+  it("build → parse でラウンドトリップする", () => {
+    const v = buildClosingStatusValue("2026-06-22T10:00:00.000Z", "a@b.co.jp");
+    expect(v).toBe("done:2026-06-22T10:00:00.000Z:a@b.co.jp");
+    expect(parseClosingStatusValue(v)).toEqual({ closedAt: "2026-06-22T10:00:00.000Z", closedBy: "a@b.co.jp" });
+  });
+  it("未締め・空・不正値は null", () => {
+    expect(parseClosingStatusValue("")).toBeNull();
+    expect(parseClosingStatusValue("open")).toBeNull();
+    expect(parseClosingStatusValue("done:")).toBeNull();
+    expect(parseClosingStatusValue("done:onlyone")).toBeNull();
+  });
+});

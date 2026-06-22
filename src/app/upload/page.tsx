@@ -117,6 +117,12 @@ function renderHighlightedText(
   return out;
 }
 
+/** "2026-04" → "2026年4月" */
+function monthJpLabel(ym: string): string {
+  const [y, m] = ym.split("-");
+  return `${y}年${parseInt(m, 10)}月`;
+}
+
 /** 命名規約: YYMMDD_部署コード_顧客コード顧客略称_社員番号.pdf
  * 例: 260401_1010_C0105SCSK Minoriソリューションズ_170156.pdf
  * multi例: 260401_1010_C0058CPリンクス_multi.pdf (1枚目)
@@ -272,7 +278,7 @@ async function extractFromPdf(
 }
 
 export default function UploadPage({ prefill, onBack }: UploadPageProps) {
-  const { user, accessToken, reauth } = useAuth();
+  const { user, accessToken, reauth, getIdToken } = useAuth();
 
   const cachedCount = useMemo(() => {
     const cache = loadCache(user?.email ?? "");
@@ -331,6 +337,29 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
       .catch(() => {});
   }, [accessToken]);
 
+  // 締め済み月を取得（締め済み月開始の注文書登録をシャットアウトするため）
+  const [closedMonths, setClosedMonths] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!accessToken) return;
+    (async () => {
+      try {
+        const idToken = await getIdToken();
+        const headers: Record<string, string> = { "x-google-access-token": accessToken };
+        if (idToken) headers["Authorization"] = `Bearer ${idToken}`;
+        const r = await fetch("/api/closing/status", { headers });
+        if (!r.ok) return;
+        const d = await r.json();
+        const closed = new Set<string>();
+        for (const [ym, st] of Object.entries((d.months ?? {}) as Record<string, { status?: string }>)) {
+          if (st?.status === "done") closed.add(ym);
+        }
+        setClosedMonths(closed);
+      } catch {
+        /* 取得失敗時はシャットアウトしない（登録を不必要に止めない） */
+      }
+    })();
+  }, [accessToken, getIdToken]);
+
   const selectedEng = selected as Engineer | null;
 
   /** キャッシュから顧客コード＋顧客名のユニークリストを生成 */
@@ -350,6 +379,10 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
       .map(([code, name]) => ({ code, name }))
       .sort((a, b) => a.code.localeCompare(b.code));
   }, [user?.email]);
+
+  // 契約開始月（YYYY-MM）が締め済みなら登録をシャットアウトする
+  const startMonthKey = startDate ? startDate.slice(0, 7) : "";
+  const isStartMonthClosed = startMonthKey !== "" && closedMonths.has(startMonthKey);
 
   const fileName = useMemo(() =>
     buildFileName(
@@ -527,6 +560,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
   const handleSubmit = async () => {
     if (!activeEntry?.file) { setUploadError("PDFファイルを選択してください"); return; }
     if (!startDate || !endDate) { setUploadError("契約期間を入力してください"); return; }
+    if (isStartMonthClosed) { setUploadError(`${monthJpLabel(startMonthKey)}は締め済みです。管理者（梅谷）に連絡してください。`); return; }
     if (targetType === "multi(チーム)" && multiMembers.length === 0) { setUploadError("チームメンバーを1名以上追加してください"); return; }
     if (targetType === "multi(チーム)" && !multiCustomerCode) { setUploadError("顧客コードを選択してください"); return; }
     setUploadError(null);
@@ -1060,13 +1094,19 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
                 <p className="text-xs font-bold text-gray-900 font-mono break-all">{fileName}</p>
               </div>
 
+              {isStartMonthClosed && (
+                <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs">
+                  🔒 {monthJpLabel(startMonthKey)}は締め済みです。登録が必要な場合は管理者（梅谷）に連絡してください。
+                </div>
+              )}
+
               {uploadError && (
                 <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs">{uploadError}</div>
               )}
 
               <button
                 onClick={handleSubmit}
-                disabled={uploading || checkingDuplicate || !activeEntry}
+                disabled={uploading || checkingDuplicate || !activeEntry || isStartMonthClosed}
                 className="w-full py-3.5 rounded-xl bg-gradient-to-r from-slate-800 to-slate-700 text-white font-bold text-sm tracking-wide hover:from-slate-700 hover:to-slate-600 transition-all disabled:opacity-50"
               >
                 {uploading ? "アップロード中…" : checkingDuplicate ? "確認中…" : "✓ 内容を確定し、期間ステータスを更新する"}

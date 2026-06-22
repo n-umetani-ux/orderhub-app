@@ -12,6 +12,25 @@ type Screen = "dashboard" | "upload" | "spec";
 const YEAR_OPTIONS = ["2026", "2027"];
 const MONTH_OPTIONS = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"];
 
+/** 月次締めの各月ステータス（/api/closing/status のレスポンス） */
+interface MonthClosingStatus {
+  status: "done" | "open";
+  gapCount?: number;
+  closedAt?: string;
+  closedBy?: string;
+}
+
+/** "2026-04" → "2026年4月" */
+function monthJpLabel(ym: string): string {
+  const [y, m] = ym.split("-");
+  return `${y}年${parseInt(m, 10)}月`;
+}
+
+/** ISO日時 → YYYY-MM-DD（パース不要。先頭10文字） */
+function shortDate(iso: string): string {
+  return (iso ?? "").slice(0, 10);
+}
+
 interface SidebarProps {
   screen: Screen;
   onNavigate: (s: Screen) => void;
@@ -49,6 +68,13 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
   const [closingInput, setClosingInput] = useState("");
   const [closingValidating, setClosingValidating] = useState(false);
   const [closingMsg, setClosingMsg] = useState<string | null>(null);
+
+  // 月次締め管理（各月のギャップ件数・締め状態）
+  const [monthCloseStatus, setMonthCloseStatus] = useState<Record<string, MonthClosingStatus>>({});
+  const [monthCloseLoading, setMonthCloseLoading] = useState(false);
+  const [monthCloseActive, setMonthCloseActive] = useState<string | null>(null); // 締め実行中の月
+  const [monthCloseMsg, setMonthCloseMsg] = useState<string | null>(null);
+  const [confirmCloseMonth, setConfirmCloseMonth] = useState<string | null>(null);
 
   const userEmail = user?.email ?? "";
 
@@ -228,6 +254,61 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
       setClosingMsg(`❌ ${err instanceof Error ? err.message : "保存に失敗しました"}`);
     } finally {
       setClosingValidating(false);
+    }
+  };
+
+  // 月次締め: 各月のギャップ件数・締め状態を取得
+  const loadMonthClose = useCallback(async () => {
+    if (!accessToken) return;
+    setMonthCloseLoading(true);
+    try {
+      const idToken = await getIdToken();
+      const headers: Record<string, string> = { "x-google-access-token": accessToken };
+      if (idToken) headers["Authorization"] = `Bearer ${idToken}`;
+      const r = await fetch("/api/closing/status", { headers });
+      const d = await r.json();
+      if (r.ok && d.months) setMonthCloseStatus(d.months as Record<string, MonthClosingStatus>);
+    } catch {
+      /* ignore */
+    } finally {
+      setMonthCloseLoading(false);
+    }
+  }, [accessToken, getIdToken]);
+
+  // 設定モーダルを開いたとき（管理者のみ）に締め状態を読み込む
+  useEffect(() => {
+    if (showSettings && isAdmin) loadMonthClose();
+  }, [showSettings, isAdmin, loadMonthClose]);
+
+  // 月次締め: 確認後に締めを実行
+  const handleCloseMonth = async (month: string) => {
+    setConfirmCloseMonth(null);
+    setMonthCloseMsg(null);
+    setMonthCloseActive(month);
+    try {
+      const idToken = await getIdToken();
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (idToken) headers["Authorization"] = `Bearer ${idToken}`;
+      if (accessToken) headers["x-google-access-token"] = accessToken;
+      const r = await fetch("/api/closing/execute", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ month }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.ok) {
+        setMonthCloseMsg(`❌ ${d.error ?? "締めに失敗しました"}`);
+        return;
+      }
+      setMonthCloseStatus(prev => ({
+        ...prev,
+        [month]: { status: "done", closedAt: d.closedAt, closedBy: d.closedBy },
+      }));
+      setMonthCloseMsg(`✅ ${monthJpLabel(month)}を締めました`);
+    } catch (err) {
+      setMonthCloseMsg(`❌ ${err instanceof Error ? err.message : "締めに失敗しました"}`);
+    } finally {
+      setMonthCloseActive(null);
     }
   };
 
@@ -464,6 +545,70 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
               </div>
             </div>
 
+            {/* 月次締め管理 */}
+            <div className="mb-5">
+              <label className="block text-sm font-medium mb-1" style={{ color: "#374151" }}>
+                月次締め管理
+              </label>
+              <p className="text-xs mb-2" style={{ color: "#6b7280" }}>
+                各月のギャップが0件になったら締めを実行します。締め後は同月開始の注文書登録ができなくなります。
+              </p>
+
+              {monthCloseLoading ? (
+                <p className="text-xs" style={{ color: "#6b7280" }}>読み込み中…</p>
+              ) : Object.keys(monthCloseStatus).length === 0 ? (
+                <p className="text-xs" style={{ color: "#6b7280" }}>対象月がありません</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {Object.entries(monthCloseStatus)
+                    .sort(([a], [b]) => a.localeCompare(b))
+                    .map(([ym, st]) => (
+                      <div key={ym} className="flex items-center gap-2 text-xs">
+                        <span className="font-semibold w-16 shrink-0" style={{ color: "#111827" }}>
+                          {monthJpLabel(ym)}
+                        </span>
+                        {st.status === "done" ? (
+                          <span className="flex-1 truncate" style={{ color: "#6b7280" }} title={st.closedBy}>
+                            🔒 締め済み {shortDate(st.closedAt ?? "")} {st.closedBy ?? ""}
+                          </span>
+                        ) : (
+                          <>
+                            <span
+                              className="px-1.5 py-0.5 rounded font-semibold shrink-0"
+                              style={(st.gapCount ?? 0) === 0
+                                ? { backgroundColor: "#dcfce7", color: "#16a34a" }
+                                : { backgroundColor: "#fef2f2", color: "#dc2626" }}
+                            >
+                              ギャップ {st.gapCount ?? 0}件
+                            </span>
+                            {(st.gapCount ?? 0) === 0 ? (
+                              <>
+                                <span style={{ color: "#16a34a" }}>✅ 締め可能</span>
+                                <button
+                                  onClick={() => setConfirmCloseMonth(ym)}
+                                  disabled={monthCloseActive === ym}
+                                  className="ml-auto px-2 py-0.5 rounded bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition-colors disabled:opacity-50 shrink-0"
+                                >
+                                  {monthCloseActive === ym ? "締め中…" : "締める"}
+                                </button>
+                              </>
+                            ) : (
+                              <span style={{ color: "#d97706" }}>⚠️ 未完了</span>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    ))}
+                </div>
+              )}
+
+              {monthCloseMsg && (
+                <p className="mt-2 text-xs" style={{ color: monthCloseMsg.startsWith("✅") ? "#059669" : "#dc2626" }}>
+                  {monthCloseMsg}
+                </p>
+              )}
+            </div>
+
             <div className="flex items-center gap-3">
               <button
                 onClick={handleSaveSettings}
@@ -485,6 +630,36 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
                 </span>
               )}
             </div>
+
+            {/* 月次締めの確認ダイアログ */}
+            {confirmCloseMonth && (
+              <div
+                className="fixed inset-0 flex items-center justify-center bg-black/40"
+                style={{ zIndex: 10000 }}
+                onClick={() => setConfirmCloseMonth(null)}
+              >
+                <div className="bg-white rounded-xl shadow-2xl p-5 w-full max-w-sm mx-4" onClick={ev => ev.stopPropagation()}>
+                  <p className="text-sm mb-4" style={{ color: "#111827" }}>
+                    {monthJpLabel(confirmCloseMonth)}の注文書を締めます。この操作は取り消せません。よろしいですか？
+                  </p>
+                  <div className="flex items-center justify-end gap-3">
+                    <button
+                      onClick={() => setConfirmCloseMonth(null)}
+                      className="px-4 py-2 rounded-lg border border-slate-300 text-sm font-semibold hover:bg-slate-50 transition-colors"
+                      style={{ color: "#374151" }}
+                    >
+                      キャンセル
+                    </button>
+                    <button
+                      onClick={() => handleCloseMonth(confirmCloseMonth)}
+                      className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-colors"
+                    >
+                      締める
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>,
         document.body

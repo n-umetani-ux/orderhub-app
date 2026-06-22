@@ -38,6 +38,66 @@ export async function readSettingsMap(
 }
 
 /**
+ * 設定シート（key/value）に1件を書き込む（既存キーは値を更新・無ければ追記）。
+ * 設定シートが無ければ作成する。settings/route.ts の POST と同じ書き込み規則を共有化したもの。
+ * サーバー側（例: closing/execute）からユーザーOAuthの sheets クライアントで呼ぶ。
+ */
+export async function appendOrUpdateSetting(
+  sheets: ReturnType<typeof google.sheets>,
+  spreadsheetId: string,
+  key: string,
+  value: string,
+): Promise<void> {
+  // 既存行を取得（シートが無い等で失敗したら空扱い）
+  let rows: string[][] = [];
+  try {
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${SETTINGS_SHEET}!A:B` });
+    rows = (res.data.values ?? []) as string[][];
+  } catch {
+    rows = [];
+  }
+
+  // 設定シートの存在確認・作成
+  const meta = await sheets.spreadsheets.get({ spreadsheetId });
+  const exists = meta.data.sheets?.some(s => s.properties?.title === SETTINGS_SHEET);
+  if (!exists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: [{ addSheet: { properties: { title: SETTINGS_SHEET } } }] },
+    });
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${SETTINGS_SHEET}!A1`,
+      valueInputOption: "RAW",
+      requestBody: { values: [["key", "value"]] },
+    });
+    rows = [["key", "value"]];
+  }
+
+  // 既存キーの行を探す（ヘッダー行はスキップ）
+  let rowIdx = -1;
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0] === key) { rowIdx = i; break; }
+  }
+
+  if (rowIdx >= 0) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${SETTINGS_SHEET}!B${rowIdx + 1}`,
+      valueInputOption: "RAW",
+      requestBody: { values: [[value]] },
+    });
+  } else {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${SETTINGS_SHEET}!A:B`,
+      valueInputOption: "RAW",
+      requestBody: { values: [[key, value]] },
+    });
+  }
+}
+
+/**
  * 設定マップから "sheet_" 接頭辞のキーだけを抽出し {"YYYY-MM": id} に正規化する純関数。
  * - "sheet_2026-08" → "2026-08"
  * - adminEmails 等の非sheetキーは除外
