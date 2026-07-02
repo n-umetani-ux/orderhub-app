@@ -630,6 +630,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
       form.append("file", activeEntry.file);
       form.append("fileName", fileName);
       form.append("customerCode", cCode);
+      form.append("contractStart", startDate);
       let currentToken = accessToken;
       let res = await fetch("/api/drive", {
         method: "POST",
@@ -647,6 +648,7 @@ export default function UploadPage({ prefill, onBack }: UploadPageProps) {
           retryForm.append("file", activeEntry.file);
           retryForm.append("fileName", fileName);
           retryForm.append("customerCode", cCode);
+          retryForm.append("contractStart", startDate);
           res = await fetch("/api/drive", {
             method: "POST",
             headers: currentToken ? { "x-google-access-token": currentToken } : {},

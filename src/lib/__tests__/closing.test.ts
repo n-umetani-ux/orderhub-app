@@ -7,6 +7,8 @@ import {
   computeMonthlyGapCounts,
   parseClosingStatusValue,
   buildClosingStatusValue,
+  contractMonthKey,
+  isMonthClosed,
   type ClosingEngineer,
 } from "@/lib/closing";
 import { OrderRecord } from "@/lib/gap-detector";
@@ -128,5 +130,49 @@ describe("parseClosingStatusValue / buildClosingStatusValue", () => {
     expect(parseClosingStatusValue("open")).toBeNull();
     expect(parseClosingStatusValue("done:")).toBeNull();
     expect(parseClosingStatusValue("done:onlyone")).toBeNull();
+  });
+});
+
+// 締め済み月シャットアウト（Finding F-1）の判定ロジック
+describe("contractMonthKey", () => {
+  it("契約開始日（YYYY-MM-DD）から対象月 YYYY-MM を取り出す", () => {
+    expect(contractMonthKey("2026-05-01")).toBe("2026-05");
+    expect(contractMonthKey("2026-05-31")).toBe("2026-05");
+    expect(contractMonthKey("2026-05")).toBe("2026-05"); // 月のみでも可
+  });
+  it("前後の空白はトリムして判定する", () => {
+    expect(contractMonthKey("  2026-05-01  ")).toBe("2026-05");
+  });
+  it("欠落・不正な入力は null（呼び出し側は400で拒否）", () => {
+    expect(contractMonthKey("")).toBeNull();
+    expect(contractMonthKey("   ")).toBeNull();
+    expect(contractMonthKey(null)).toBeNull();
+    expect(contractMonthKey(undefined)).toBeNull();
+    expect(contractMonthKey("2026/05/01")).toBeNull();
+    expect(contractMonthKey("2026-13-01")).toBeNull(); // 月範囲外
+  });
+});
+
+describe("isMonthClosed", () => {
+  // 2026-05 のみ締め済みの設定マップ
+  const settings: Record<string, string> = {
+    [closingStatusKey("2026-05")]: buildClosingStatusValue("2026-06-22T10:00:00.000Z", "ume@beat-tech.co.jp"),
+  };
+
+  it("締め済み月は true（登録拒否＝409相当）", () => {
+    expect(isMonthClosed(settings, "2026-05")).toBe(true);
+  });
+  it("未締め月・設定なしは false（登録通過）", () => {
+    expect(isMonthClosed(settings, "2026-04")).toBe(false);
+    expect(isMonthClosed(settings, "2026-06")).toBe(false);
+    expect(isMonthClosed({}, "2026-05")).toBe(false);
+  });
+  it("月境界: 締め月(2026-05)の前月末・翌月頭は別月として通過し、当月末は拒否", () => {
+    // 前月末 2026-04-30 → 2026-04（未締め＝通過）
+    expect(isMonthClosed(settings, contractMonthKey("2026-04-30")!)).toBe(false);
+    // 当月末 2026-05-31 → 2026-05（締め済み＝拒否）
+    expect(isMonthClosed(settings, contractMonthKey("2026-05-31")!)).toBe(true);
+    // 翌月頭 2026-06-01 → 2026-06（未締め＝通過）
+    expect(isMonthClosed(settings, contractMonthKey("2026-06-01")!)).toBe(false);
   });
 });

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
 import { Readable } from "stream";
+import { readSettingsMapOrThrow } from "@/lib/settings";
+import { contractMonthKey, isMonthClosed } from "@/lib/closing";
 
 const DEFAULT_DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID ?? "";
 const SPREADSHEET_ID = process.env.ORDER_LEDGER_SHEET_ID ?? process.env.GOOGLE_SHEETS_ID!;
@@ -93,9 +95,17 @@ export async function POST(req: NextRequest) {
     const file = formData.get("file") as File | null;
     const fileName = formData.get("fileName") as string | null;
     const customerCode = ((formData.get("customerCode") as string | null) ?? "").trim();
+    const contractStart = ((formData.get("contractStart") as string | null) ?? "").trim();
 
     if (!file || !fileName) {
       return NextResponse.json({ error: "file と fileName は必須です" }, { status: 400 });
+    }
+
+    // 締め済み月への登録をサーバー側でシャットアウト（Phase A/B Finding F-1）
+    // 判定は /api/orders と統一（contractStart の月 YYYY-MM 単位）。欠落は 400 で拒否。
+    const month = contractMonthKey(contractStart);
+    if (!month) {
+      return NextResponse.json({ error: "契約開始日が指定されていません" }, { status: 400 });
     }
 
     const oauth2 = new google.auth.OAuth2();
@@ -123,6 +133,27 @@ export async function POST(req: NextRequest) {
         error: folderError,
         _debug: { scopes, parentFolderId, folderCheck: folderCheck.detail },
       }, { status: 403 });
+    }
+
+    // 締め済み月への登録をサーバー側でシャットアウト（Phase A/B Finding F-1）。
+    // トークン有効性が folderCheck 通過で確定した後に判定する。これにより
+    // トークン失効時は既存の再認証/再ログイン導線が先に働き（自動リトライUX維持）、
+    // 再認証後の有効トークンで締め状態を読む。それでも読めない場合のみ 503（フェイルクローズ）。
+    // 判定は /api/orders と統一（contractStart の月 YYYY-MM 単位）。Drive書き込みより前を維持。
+    let closingSettings: Record<string, string>;
+    try {
+      closingSettings = await readSettingsMapOrThrow(sheets);
+    } catch {
+      return NextResponse.json(
+        { error: "締め状態を確認できませんでした。再ログインして再試行してください" },
+        { status: 503 },
+      );
+    }
+    if (isMonthClosed(closingSettings, month)) {
+      return NextResponse.json(
+        { error: "この月は締め済みです。管理者に連絡してください" },
+        { status: 409 },
+      );
     }
 
     // 顧客サブフォルダへ振り分け（失敗時は親フォルダにフォールバック）

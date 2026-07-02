@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
+import { readSettingsMapOrThrow } from "@/lib/settings";
+import { contractMonthKey, isMonthClosed } from "@/lib/closing";
 
 const SPREADSHEET_ID = process.env.ORDER_LEDGER_SHEET_ID ?? process.env.GOOGLE_SHEETS_ID!;
 const ORDERS_SHEET = "注文書台帳";
@@ -109,6 +111,28 @@ export async function POST(req: NextRequest) {
     const oauth2 = new google.auth.OAuth2();
     oauth2.setCredentials({ access_token: accessToken });
     const sheets = google.sheets({ version: "v4", auth: oauth2 });
+
+    // 締め済み月への登録をサーバー側でシャットアウト（Phase A/B Finding F-1）
+    // 判定は contractStart の月（YYYY-MM）単位。設定が読めない場合はフェイルクローズで503。
+    const month = contractMonthKey(body.contractStart);
+    if (!month) {
+      return NextResponse.json({ error: "契約開始日が指定されていません" }, { status: 400 });
+    }
+    let closingSettings: Record<string, string>;
+    try {
+      closingSettings = await readSettingsMapOrThrow(sheets);
+    } catch {
+      return NextResponse.json(
+        { error: "締め状態を確認できませんでした。再ログインして再試行してください" },
+        { status: 503 },
+      );
+    }
+    if (isMonthClosed(closingSettings, month)) {
+      return NextResponse.json(
+        { error: "この月は締め済みです。管理者に連絡してください" },
+        { status: 409 },
+      );
+    }
 
     await ensureSheet(sheets, SPREADSHEET_ID);
 

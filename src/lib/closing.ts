@@ -130,3 +130,22 @@ export function parseClosingStatusValue(value: string): ClosedInfo | null {
 export function buildClosingStatusValue(closedAt: string, closedBy: string): string {
   return `done:${closedAt}:${closedBy}`;
 }
+
+/**
+ * contractStart（"YYYY-MM-DD" 等の日付文字列）から対象月キー "YYYY-MM" を取り出す。
+ * 締め判定はこの月キー単位で行う（サーバー側シャットアウトの共通ロジック）。
+ * 欠落・形式不正（先頭7文字が YYYY-MM でない）なら null を返す
+ * → 呼び出し側は 400 で拒否する。
+ */
+export function contractMonthKey(contractStart: string | null | undefined): string | null {
+  const month = (contractStart ?? "").trim().slice(0, 7);
+  return isValidMonthKey(month) ? month : null;
+}
+
+/**
+ * 設定マップ上で指定月（YYYY-MM）が締め済みかを判定する。
+ * 判定は parseClosingStatusValue を流用し、締め済み判定ロジックを新設・重複させない。
+ */
+export function isMonthClosed(settings: Record<string, string>, month: string): boolean {
+  return parseClosingStatusValue(settings[closingStatusKey(month)] ?? "") !== null;
+}

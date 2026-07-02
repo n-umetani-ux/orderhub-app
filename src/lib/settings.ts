@@ -38,6 +38,28 @@ export async function readSettingsMap(
 }
 
 /**
+ * readSettingsMap と同じ設定シート（A:B の key/value）を読むが、読み取り失敗時は
+ * throw する（フェイルクローズ）。readSettingsMap の挙動は一切変更しない別関数。
+ *
+ * 「設定が読めない＝安全側で処理を止めたい」用途（締め状態の確認など）向け。
+ * 呼び出し側は catch して 503 を返し、締め状態を確認できないまま登録を通さないこと。
+ */
+export async function readSettingsMapOrThrow(
+  sheets: ReturnType<typeof google.sheets>,
+): Promise<Record<string, string>> {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SETTINGS_SHEET}!A:B`,
+  });
+  const rows = (res.data.values ?? []) as string[][];
+  const settings: Record<string, string> = {};
+  for (const row of rows.slice(1)) {
+    if (row[0]) settings[row[0]] = row[1] ?? "";
+  }
+  return settings;
+}
+
+/**
  * 設定シート（key/value）に1件を書き込む（既存キーは値を更新・無ければ追記）。
  * 設定シートが無ければ作成する。settings/route.ts の POST と同じ書き込み規則を共有化したもの。
  * サーバー側（例: closing/execute）からユーザーOAuthの sheets クライアントで呼ぶ。
