@@ -75,6 +75,7 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
   const [monthCloseActive, setMonthCloseActive] = useState<string | null>(null); // 締め実行中の月
   const [monthCloseMsg, setMonthCloseMsg] = useState<string | null>(null);
   const [confirmCloseMonth, setConfirmCloseMonth] = useState<string | null>(null);
+  const [confirmCancelMonth, setConfirmCancelMonth] = useState<string | null>(null); // 締め解除の確認対象月
 
   const userEmail = user?.email ?? "";
 
@@ -307,6 +308,40 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
       setMonthCloseMsg(`✅ ${monthJpLabel(month)}を締めました`);
     } catch (err) {
       setMonthCloseMsg(`❌ ${err instanceof Error ? err.message : "締めに失敗しました"}`);
+    } finally {
+      setMonthCloseActive(null);
+    }
+  };
+
+  // 月次締め: 確認後に締め解除を実行（誤締めの取り消し。解除後は同月開始の登録が可能に戻る）
+  const handleCancelMonth = async (month: string) => {
+    setConfirmCancelMonth(null);
+    setMonthCloseMsg(null);
+    setMonthCloseActive(month);
+    try {
+      const idToken = await getIdToken();
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (idToken) headers["Authorization"] = `Bearer ${idToken}`;
+      if (accessToken) headers["x-google-access-token"] = accessToken;
+      const r = await fetch("/api/closing/cancel", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ month }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.ok) {
+        setMonthCloseMsg(`❌ ${d.error ?? "締め解除に失敗しました"}`);
+        return;
+      }
+      // 解除後は未締め（open）へ戻す。ギャップ件数は最新値を再取得して反映
+      setMonthCloseStatus(prev => ({
+        ...prev,
+        [month]: { status: "open", gapCount: prev[month]?.gapCount ?? 0 },
+      }));
+      setMonthCloseMsg(`✅ ${monthJpLabel(month)}の締めを解除しました`);
+      loadMonthClose();
+    } catch (err) {
+      setMonthCloseMsg(`❌ ${err instanceof Error ? err.message : "締め解除に失敗しました"}`);
     } finally {
       setMonthCloseActive(null);
     }
@@ -568,9 +603,18 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
                           {monthJpLabel(ym)}
                         </span>
                         {st.status === "done" ? (
-                          <span className="flex-1 truncate" style={{ color: "#6b7280" }} title={st.closedBy}>
-                            🔒 締め済み {shortDate(st.closedAt ?? "")} {st.closedBy ?? ""}
-                          </span>
+                          <>
+                            <span className="flex-1 truncate" style={{ color: "#6b7280" }} title={st.closedBy}>
+                              🔒 締め済み {shortDate(st.closedAt ?? "")} {st.closedBy ?? ""}
+                            </span>
+                            <button
+                              onClick={() => setConfirmCancelMonth(ym)}
+                              disabled={monthCloseActive === ym}
+                              className="px-2 py-0.5 rounded border border-red-300 text-red-600 font-semibold hover:bg-red-50 transition-colors disabled:opacity-50 shrink-0"
+                            >
+                              {monthCloseActive === ym ? "解除中…" : "締め解除"}
+                            </button>
+                          </>
                         ) : (
                           <>
                             <span
@@ -655,6 +699,36 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
                       className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-colors"
                     >
                       締める
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 月次締め解除の確認ダイアログ（誤締めの取り消し） */}
+            {confirmCancelMonth && (
+              <div
+                className="fixed inset-0 flex items-center justify-center bg-black/40"
+                style={{ zIndex: 10000 }}
+                onClick={() => setConfirmCancelMonth(null)}
+              >
+                <div className="bg-white rounded-xl shadow-2xl p-5 w-full max-w-sm mx-4" onClick={ev => ev.stopPropagation()}>
+                  <p className="text-sm mb-4" style={{ color: "#111827" }}>
+                    {monthJpLabel(confirmCancelMonth)}の締めを解除します。解除後は同月開始の注文書を再び登録できるようになります。よろしいですか？
+                  </p>
+                  <div className="flex items-center justify-end gap-3">
+                    <button
+                      onClick={() => setConfirmCancelMonth(null)}
+                      className="px-4 py-2 rounded-lg border border-slate-300 text-sm font-semibold hover:bg-slate-50 transition-colors"
+                      style={{ color: "#374151" }}
+                    >
+                      キャンセル
+                    </button>
+                    <button
+                      onClick={() => handleCancelMonth(confirmCancelMonth)}
+                      className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-semibold hover:bg-red-700 transition-colors"
+                    >
+                      締め解除
                     </button>
                   </div>
                 </div>

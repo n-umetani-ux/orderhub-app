@@ -7,6 +7,7 @@ import {
   computeMonthlyGapCounts,
   parseClosingStatusValue,
   buildClosingStatusValue,
+  buildCancelledStatusValue,
   contractMonthKey,
   isMonthClosed,
   type ClosingEngineer,
@@ -174,5 +175,24 @@ describe("isMonthClosed", () => {
     expect(isMonthClosed(settings, contractMonthKey("2026-05-31")!)).toBe(true);
     // 翌月頭 2026-06-01 → 2026-06（未締め＝通過）
     expect(isMonthClosed(settings, contractMonthKey("2026-06-01")!)).toBe(false);
+  });
+});
+
+// 締め解除（ステップ②・案a: cancelled: 記録）
+describe("buildCancelledStatusValue / 解除後のゲート挙動", () => {
+  it("cancelled:{ISO}:{email} を生成する", () => {
+    expect(buildCancelledStatusValue("2026-07-02T00:00:00.000Z", "ume@beat-tech.co.jp"))
+      .toBe("cancelled:2026-07-02T00:00:00.000Z:ume@beat-tech.co.jp");
+  });
+  it("解除値は締め済みと解釈されず、isMonthClosed が false（ステップ①ゲートが開く）", () => {
+    const key = closingStatusKey("2026-05");
+    // 締め済み → true
+    const closed = { [key]: buildClosingStatusValue("2026-06-22T10:00:00.000Z", "ume@beat-tech.co.jp") };
+    expect(isMonthClosed(closed, "2026-05")).toBe(true);
+    // 解除でセル値を cancelled: に更新 → false（登録可能に戻る）
+    const cancelled = { [key]: buildCancelledStatusValue("2026-07-02T00:00:00.000Z", "ume@beat-tech.co.jp") };
+    expect(isMonthClosed(cancelled, "2026-05")).toBe(false);
+    // parseClosingStatusValue も cancelled: は null（done: 以外は締め済みでない）
+    expect(parseClosingStatusValue(cancelled[key])).toBeNull();
   });
 });

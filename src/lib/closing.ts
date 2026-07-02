@@ -132,6 +132,16 @@ export function buildClosingStatusValue(closedAt: string, closedBy: string): str
 }
 
 /**
+ * 締め解除の設定値 "cancelled:{ISO}:{email}" を生成する（案a: 解除の実施者・日時を記録）。
+ * parseClosingStatusValue は "done:" 始まりのみ締め済みと解釈するため、この値は
+ * isMonthClosed=false（＝未締め扱い）となり、ステップ①のサーバー側ゲートが再び開く。
+ * closing_status:{month} を上書きするため、直前の done: 情報は残らない（解除イベントのみ保持）。
+ */
+export function buildCancelledStatusValue(cancelledAt: string, cancelledBy: string): string {
+  return `cancelled:${cancelledAt}:${cancelledBy}`;
+}
+
+/**
  * contractStart（"YYYY-MM-DD" 等の日付文字列）から対象月キー "YYYY-MM" を取り出す。
  * 締め判定はこの月キー単位で行う（サーバー側シャットアウトの共通ロジック）。
  * 欠落・形式不正（先頭7文字が YYYY-MM でない）なら null を返す
