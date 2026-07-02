@@ -10,7 +10,9 @@ import {
   buildCancelledStatusValue,
   contractMonthKey,
   isMonthClosed,
+  buildMovePreview,
   type ClosingEngineer,
+  type PreviewOrderRow,
 } from "@/lib/closing";
 import { OrderRecord } from "@/lib/gap-detector";
 
@@ -194,5 +196,67 @@ describe("buildCancelledStatusValue / 解除後のゲート挙動", () => {
     expect(isMonthClosed(cancelled, "2026-05")).toBe(false);
     // parseClosingStatusValue も cancelled: は null（done: 以外は締め済みでない）
     expect(parseClosingStatusValue(cancelled[key])).toBeNull();
+  });
+});
+
+// 移動対象プレビューの分類（ステップ③）
+describe("buildMovePreview", () => {
+  const mk = (
+    o: Partial<PreviewOrderRow> & { manNo: string; contractStart: string; contractEnd: string },
+  ): PreviewOrderRow => ({ name: "", fileName: "", driveLink: "", customerCode: "C1", uploadedAt: "", ...o });
+
+  it("差し替え: 新row=有効🟢+Driveあり / 旧row=dedup隠れ⚪+Driveなし（対象月に両方返る）", () => {
+    const rows: PreviewOrderRow[] = [
+      mk({ manNo: "100", fileName: "old.pdf", contractStart: "2026-04-01", contractEnd: "2026-09-30", uploadedAt: "2026-04-01T00:00:00Z", driveLink: "" }),
+      mk({ manNo: "100", fileName: "new.pdf", contractStart: "2026-04-01", contractEnd: "2026-06-30", uploadedAt: "2026-06-01T00:00:00Z", driveLink: "http://drive/new" }),
+    ];
+    const res = buildMovePreview(rows, "2026-04");
+    expect(res.total).toBe(2);
+    expect(res.hiddenCount).toBe(1);
+    const neu = res.rows.find(r => r.fileName === "new.pdf")!;
+    const old = res.rows.find(r => r.fileName === "old.pdf")!;
+    expect(neu.effective).toBe(true);
+    expect(neu.hasDriveFile).toBe(true);
+    expect(old.effective).toBe(false);
+    expect(old.hasDriveFile).toBe(false);
+  });
+
+  it("連続契約（期間が重ならない）は両方 effective=true（dedupで消えない）", () => {
+    const rows: PreviewOrderRow[] = [
+      mk({ manNo: "200", fileName: "q1.pdf", contractStart: "2026-04-01", contractEnd: "2026-06-30", driveLink: "http://d/1" }),
+      mk({ manNo: "200", fileName: "q2.pdf", contractStart: "2026-07-01", contractEnd: "2026-09-30", driveLink: "http://d/2" }),
+    ];
+    const apr = buildMovePreview(rows, "2026-04");
+    expect(apr.total).toBe(1);
+    expect(apr.hiddenCount).toBe(0);
+    expect(apr.rows[0].effective).toBe(true);
+    const jul = buildMovePreview(rows, "2026-07");
+    expect(jul.total).toBe(1);
+    expect(jul.rows[0].effective).toBe(true);
+  });
+
+  it("対象月フィルタ境界: contractStart の月が一致する行のみ返る（前月末・翌月頭は対象外）", () => {
+    const rows: PreviewOrderRow[] = [
+      mk({ manNo: "300", fileName: "mar.pdf", contractStart: "2026-03-31", contractEnd: "2026-08-31" }),
+      mk({ manNo: "301", fileName: "apr1.pdf", contractStart: "2026-04-01", contractEnd: "2026-04-30" }),
+      mk({ manNo: "302", fileName: "apr30.pdf", contractStart: "2026-04-30", contractEnd: "2026-10-31" }),
+      mk({ manNo: "303", fileName: "may.pdf", contractStart: "2026-05-01", contractEnd: "2026-09-30" }),
+    ];
+    const apr = buildMovePreview(rows, "2026-04");
+    expect(apr.rows.map(r => r.fileName).sort()).toEqual(["apr1.pdf", "apr30.pdf"]);
+    expect(apr.total).toBe(2);
+  });
+
+  it("別顧客の並行稼働は別系列で保持（誤ってdedup隠れにしない）・Driveリンク有無を区別", () => {
+    const rows: PreviewOrderRow[] = [
+      mk({ manNo: "400", customerCode: "C1", fileName: "c1.pdf", contractStart: "2026-04-01", contractEnd: "2026-06-30", driveLink: "http://d/c1" }),
+      mk({ manNo: "400", customerCode: "C2", fileName: "c2.pdf", contractStart: "2026-04-01", contractEnd: "2026-06-30", driveLink: "   " }),
+    ];
+    const res = buildMovePreview(rows, "2026-04");
+    expect(res.total).toBe(2);
+    expect(res.hiddenCount).toBe(0);
+    expect(res.rows.every(r => r.effective)).toBe(true);
+    expect(res.rows.find(r => r.fileName === "c1.pdf")!.hasDriveFile).toBe(true);
+    expect(res.rows.find(r => r.fileName === "c2.pdf")!.hasDriveFile).toBe(false); // 空白のみは無し扱い
   });
 });

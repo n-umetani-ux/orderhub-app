@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { useAuth } from "@/lib/auth-context";
 import { extractSheetId } from "@/lib/sheet-id";
@@ -18,6 +18,24 @@ interface MonthClosingStatus {
   gapCount?: number;
   closedAt?: string;
   closedBy?: string;
+}
+
+/** 移動対象プレビュー1行（/api/closing/preview のレスポンス） */
+interface MovePreviewRow {
+  fileName: string;
+  name: string;
+  manNo: string;
+  customerCode: string;
+  contractStart: string;
+  contractEnd: string;
+  effective: boolean;
+  hasDriveFile: boolean;
+}
+interface MovePreviewResult {
+  month: string;
+  rows: MovePreviewRow[];
+  total: number;
+  hiddenCount: number;
 }
 
 /** "2026-04" → "2026年4月" */
@@ -76,6 +94,10 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
   const [monthCloseMsg, setMonthCloseMsg] = useState<string | null>(null);
   const [confirmCloseMonth, setConfirmCloseMonth] = useState<string | null>(null);
   const [confirmCancelMonth, setConfirmCancelMonth] = useState<string | null>(null); // 締め解除の確認対象月
+  // 移動対象プレビュー（月ごとに展開・読み取りのみ）
+  const [previewMonth, setPreviewMonth] = useState<string | null>(null);
+  const [previewData, setPreviewData] = useState<MovePreviewResult | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   const userEmail = user?.email ?? "";
 
@@ -347,6 +369,36 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
     }
   };
 
+  // 移動対象プレビュー: 月の展開/折りたたみ（読み取りのみ・Phase C-2 前の目視確認）
+  const togglePreview = async (month: string) => {
+    if (previewMonth === month) {
+      setPreviewMonth(null);
+      setPreviewData(null);
+      return;
+    }
+    setPreviewMonth(month);
+    setPreviewData(null);
+    setPreviewLoading(true);
+    try {
+      const idToken = await getIdToken();
+      const headers: Record<string, string> = {};
+      if (idToken) headers["Authorization"] = `Bearer ${idToken}`;
+      if (accessToken) headers["x-google-access-token"] = accessToken;
+      const r = await fetch(`/api/closing/preview?month=${encodeURIComponent(month)}`, { headers });
+      const d = await r.json();
+      if (r.ok && Array.isArray(d.rows)) {
+        setPreviewData(d as MovePreviewResult);
+      } else {
+        setMonthCloseMsg(`❌ ${d.error ?? "プレビューの取得に失敗しました"}`);
+        setPreviewData({ month, rows: [], total: 0, hiddenCount: 0 });
+      }
+    } catch {
+      setPreviewData({ month, rows: [], total: 0, hiddenCount: 0 });
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
   const driveUrl = `https://drive.google.com/drive/folders/${driveFolderId}`;
 
   return (
@@ -598,7 +650,8 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
                   {Object.entries(monthCloseStatus)
                     .sort(([a], [b]) => a.localeCompare(b))
                     .map(([ym, st]) => (
-                      <div key={ym} className="flex items-center gap-2 text-xs">
+                      <Fragment key={ym}>
+                      <div className="flex items-center gap-2 text-xs">
                         <span className="font-semibold w-16 shrink-0" style={{ color: "#111827" }}>
                           {monthJpLabel(ym)}
                         </span>
@@ -642,6 +695,51 @@ export function Sidebar({ screen, onNavigate, gapCount, onAdminChange }: Sidebar
                           </>
                         )}
                       </div>
+
+                      {/* 移動対象プレビュー（読み取りのみ・展開式） */}
+                      <div className="pl-16">
+                        <button
+                          onClick={() => togglePreview(ym)}
+                          className="text-xs text-blue-600 hover:underline"
+                        >
+                          {previewMonth === ym ? "▾ 移動対象を隠す" : "▸ 移動対象プレビュー"}
+                        </button>
+                        {previewMonth === ym && (
+                          <div className="mt-1 rounded border border-slate-200 bg-slate-50 p-2">
+                            {previewLoading ? (
+                              <p className="text-xs" style={{ color: "#6b7280" }}>読み込み中…</p>
+                            ) : previewData ? (
+                              <>
+                                <p className="text-xs font-semibold mb-1" style={{ color: "#111827" }}>
+                                  移動対象 {previewData.total}件
+                                  <span style={{ color: "#6b7280" }}>（うち dedup隠れ {previewData.hiddenCount}件）</span>
+                                </p>
+                                {previewData.total === 0 ? (
+                                  <p className="text-xs" style={{ color: "#6b7280" }}>対象行がありません</p>
+                                ) : (
+                                  <div className="space-y-0.5">
+                                    {previewData.rows.map((row, i) => (
+                                      <div key={i} className="flex items-center gap-1.5 text-xs">
+                                        <span className="shrink-0" title={row.effective ? "有効" : "dedupで隠れた古い行"}>
+                                          {row.effective ? "🟢" : "⚪"}
+                                        </span>
+                                        <span className="flex-1 truncate" style={{ color: "#374151" }} title={row.fileName}>
+                                          {row.fileName || "（ファイル名なし）"}
+                                        </span>
+                                        <span className="shrink-0" style={{ color: "#6b7280" }}>{row.name}</span>
+                                        <span className="shrink-0" title={row.hasDriveFile ? "Driveリンクあり" : "Driveリンクなし"}>
+                                          {row.hasDriveFile ? "🔗" : "—"}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </>
+                            ) : null}
+                          </div>
+                        )}
+                      </div>
+                      </Fragment>
                     ))}
                 </div>
               )}

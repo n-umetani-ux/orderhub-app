@@ -7,7 +7,7 @@
  */
 import { google } from "googleapis";
 import { OrderRecord } from "@/lib/gap-detector";
-import { ClosingEngineer } from "@/lib/closing";
+import { ClosingEngineer, PreviewOrderRow } from "@/lib/closing";
 
 const CACHE_SHEET = "稼働キャッシュ";
 
@@ -62,6 +62,39 @@ export async function readOrdersByManNo(
     // 台帳が無ければ空
   }
   return map;
+}
+
+/**
+ * 移動対象プレビュー用に注文書台帳を1行=1件で読む（非機密フィールドのみ）。
+ * readOrdersByManNo との違い: fileName / 対象者名 / driveLink も返す（プレビュー表示に必要）。
+ * 列順は orders/route.ts の HEADERS と一致（0:manNo 1:name 2:contractStart 3:contractEnd
+ * 4:fileName 5:driveLink 7:customerCode 10:uploadedAt）。A:K の範囲内で機密列は含まない。
+ */
+export async function readOrderRowsForPreview(
+  sheets: ReturnType<typeof google.sheets>,
+  ledgerId: string,
+): Promise<PreviewOrderRow[]> {
+  try {
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId: ledgerId, range: "注文書台帳!A:K" });
+    const rows = (res.data.values ?? []) as string[][];
+    const result: PreviewOrderRow[] = [];
+    for (const row of rows.slice(1)) {
+      if (!row[0] || !row[2] || !row[3]) continue; // manNo/contractStart/contractEnd 必須（既存と同基準）
+      result.push({
+        manNo: row[0],
+        name: row[1] ?? "",
+        contractStart: row[2],
+        contractEnd: row[3],
+        fileName: row[4] ?? "",
+        driveLink: row[5] ?? "",
+        customerCode: row[7] ?? "",
+        uploadedAt: row[10] ?? "",
+      });
+    }
+    return result;
+  } catch {
+    return [];
+  }
 }
 
 /** アーカイブ申請（rejected 以外）の manNo 集合（dashboard と同じく gap 集計から除外する） */

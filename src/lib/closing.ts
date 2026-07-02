@@ -159,3 +159,60 @@ export function contractMonthKey(contractStart: string | null | undefined): stri
 export function isMonthClosed(settings: Record<string, string>, month: string): boolean {
   return parseClosingStatusValue(settings[closingStatusKey(month)] ?? "") !== null;
 }
+
+/** 移動対象プレビューの入力1行（台帳の非機密フィールドのみ。OrderRecord を dedup 用に拡張） */
+export interface PreviewOrderRow extends OrderRecord {
+  name: string;
+  fileName: string;
+  driveLink?: string;
+}
+
+/** 移動対象プレビューの出力1行（フロントに渡す・機密列は含めない） */
+export interface MovePreviewRow {
+  fileName: string;
+  name: string;
+  manNo: string;
+  customerCode: string;
+  contractStart: string;
+  contractEnd: string;
+  /** selectEffectiveOrders で有効（true）か、dedup で隠れた古い行（false）か */
+  effective: boolean;
+  /** driveLink の有無（Drive実体の存在推定） */
+  hasDriveFile: boolean;
+}
+
+/** 移動対象プレビューの集計結果 */
+export interface MovePreviewResult {
+  month: string;
+  rows: MovePreviewRow[];
+  total: number;       // 対象月の行数
+  hiddenCount: number; // うち dedup 隠れ（effective=false）の件数
+}
+
+/**
+ * 移動対象プレビューの分類（純関数・I/Oなし）。Phase C-2（実PDF移動）前の目視確認用。
+ *
+ * - dedup（selectEffectiveOrders）は manNo+customerCode 単位・全行で判定する。
+ *   差し替えで隠れた古い行を effective=false として可視化し、
+ *   「旧行も電帳法保存対象にするか（論点1）」の確認材料にする。
+ * - 対象月は contractStart の月（YYYY-MM）が month に一致する行に絞る（分類の後にフィルタ）。
+ * - selectEffectiveOrders は gap-detector の既存実装を流用・改変しない（Phase B と同方針）。
+ */
+export function buildMovePreview(all: PreviewOrderRow[], month: string): MovePreviewResult {
+  // 有効行の集合を全行で算出（返り値は元オブジェクト参照なので Set で同一性判定できる）
+  const effective = new Set<PreviewOrderRow>(selectEffectiveOrders(all));
+  const rows: MovePreviewRow[] = all
+    .filter(r => contractMonthKey(r.contractStart) === month)
+    .map(r => ({
+      fileName: r.fileName,
+      name: r.name,
+      manNo: r.manNo,
+      customerCode: r.customerCode ?? "",
+      contractStart: r.contractStart,
+      contractEnd: r.contractEnd,
+      effective: effective.has(r),
+      hasDriveFile: !!(r.driveLink && r.driveLink.trim()),
+    }));
+  const hiddenCount = rows.filter(r => !r.effective).length;
+  return { month, rows, total: rows.length, hiddenCount };
+}
